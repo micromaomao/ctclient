@@ -1,0 +1,33 @@
+[package]
+name = "ctclient"
+version = "0.1.0"
+authors = ["Mao Wtm <m@maowtm.org>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+default-run = "ctclient"
+
+[[bin]]
+name = "sketch"
+path = "src/main.rs"
+
+[[bin]]
+name = "ctclient"
+path = "src/bin.rs"
+
+[lib]
+name = "ctclient"
+path = "src/lib.rs"
+
+# [replace]
+# "hyper-rustls:0.16.1" = { path = "../hyper-rustls" }
+# "rustls:0.15.2" = { path = "../rustls" }
+# "reqwest:0.9.19" = { path = "../reqwest" }
+# "tokio-rustls:0.9.3" = { path = "../tokio-rustls" }
+
+[dependencies]
+reqwest = { version = "0.9.19" }
+serde = { version = "1.0.97", features = ["derive"] }
+base64 = "0.10.1"
+openssl = "0.10.24"
