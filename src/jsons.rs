@@ -14,3 +14,14 @@ pub struct STH {
 pub struct ConsistencyProof {
   pub consistency: Vec<String>,
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct GetEntries {
+  pub entries: Vec<LeafEntry>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LeafEntry {
+  pub leaf_input: String,
+  pub extra_data: String,
+}

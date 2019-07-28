@@ -103,7 +103,11 @@ pub fn get_json<J: serde::de::DeserializeOwned>(client: &reqwest::Client, base_u
 		return Err(Error::InvalidResponseStatus(response.status()));
 	}
   let response = response.text().map_err(|e| Error::NetIO(e))?;
-  trace!("GET {} -> {:?}", &url_str, &response);
+  if response.len() > 150 {
+    trace!("GET {} -> {:?}...", &url_str, &response[..150]);
+  } else {
+    trace!("GET {} -> {:?}", &url_str, &response);
+  }
   let json = serde_json::from_str(&response).map_err(|e| Error::MalformedResponseBody(format!("Unable to decode JSON: {} (response is {:?})", &e, &response)))?;
   Ok(json)
 }
@@ -530,4 +534,209 @@ pub fn check_consistency_proof(client: &reqwest::Client, base_url: &reqwest::Url
   }
   assert_eq!(parsed_server_proof.len(), n);
   verify_consistency_proof(perv_size, next_size, &parsed_server_proof, perv_root, next_root).map_err(|e| Error::InvalidConsistencyProof(perv_size, next_size, e))
+}
+
+use std::ops::Range;
+use std::iter::Iterator;
+
+pub struct GetEntriesIter<'a> {
+  requested_range: Range<u64>,
+  done: bool,
+  last_gotten_entries: (Range<u64>, Vec<Option<jsons::LeafEntry>>),
+  next_index: u64,
+  batch_size: u64,
+
+  client: &'a reqwest::Client,
+  base_url: &'a reqwest::Url,
+}
+
+impl<'a> GetEntriesIter<'a> {
+  fn new(range: std::ops::Range<u64>, client: &'a reqwest::Client, base_url: &'a reqwest::Url) -> Self {
+    Self{
+      last_gotten_entries: (range.start..range.start, Vec::new()),
+      next_index: range.start,
+      requested_range: range,
+      done: false,
+      batch_size: 10240,
+
+      client, base_url
+    }
+  }
+}
+
+impl<'a> Iterator for GetEntriesIter<'a> {
+  type Item = Result<Leaf, Error>;
+
+  fn next(&mut self) -> Option<Self::Item> {
+    if self.done {
+      return None;
+    }
+    if self.next_index >= self.requested_range.end {
+      self.done = true;
+      return None;
+    }
+    let (ref mut last_gotten_range, ref mut last_gotten_entries) = self.last_gotten_entries;
+    assert!(self.next_index >= last_gotten_range.start);
+    assert!(self.next_index <= last_gotten_range.end);
+    if self.next_index == last_gotten_range.end {
+      assert!(self.requested_range.end > last_gotten_range.end); // The case where there's no more to be fetched is checked at the beginning of this function.
+      let mut next_sub_range = last_gotten_range.end..u64::min(last_gotten_range.end + self.batch_size, self.requested_range.end);
+      let try_next_entries = get_json(self.client, self.base_url, &format!("ct/v1/get-entries?start={}&end={}", next_sub_range.start, next_sub_range.end - 1)).map(|x: jsons::GetEntries| x.entries);
+      if let Ok(next_entries) = try_next_entries {
+        next_sub_range.end = next_sub_range.start + next_entries.len() as u64;
+        if next_entries.len() == 0 {
+          self.last_gotten_entries = (next_sub_range, Vec::new());
+          return self.next();
+        } else {
+          self.last_gotten_entries = (next_sub_range, next_entries.into_iter().map(|x| Some(x)).collect());
+          self.next_index += 1;
+          let leaf_entry = self.last_gotten_entries.1[0].take().unwrap();
+          match Leaf::try_from(&leaf_entry) {
+            Ok(leaf) => {
+              return Some(Ok(leaf));
+            },
+            Err(e) => {
+              self.done = true;
+              return Some(Err(e));
+            }
+          }
+        }
+      } else {
+        let err = try_next_entries.unwrap_err();
+        self.done = true;
+        return Some(Err(err));
+      }
+    } else {
+      assert_eq!(last_gotten_entries.len() as u64, last_gotten_range.end - last_gotten_range.start);
+      let leaf_entry = last_gotten_entries[(self.next_index - last_gotten_range.start) as usize].take().unwrap();
+      self.next_index += 1;
+      match Leaf::try_from(&leaf_entry) {
+        Ok(leaf) => {
+          return Some(Ok(leaf));
+        },
+        Err(e) => {
+          self.done = true;
+          return Some(Err(e));
+        }
+      }
+    }
+  }
+}
+
+/// Request leaf entries from the CT log. Does not verify if these entries are
+/// consistent with the tree or anything like that. Returns an iterator over the
+/// leaves.
+pub fn get_entries<'a>(client: &'a reqwest::Client, base_url: &'a reqwest::Url, range: Range<u64>) -> GetEntriesIter<'a> {
+  GetEntriesIter::new(range, client, base_url)
+}
+
+pub struct Leaf {
+  hash: [u8; 32],
+}
+
+use std::convert::TryFrom;
+
+impl TryFrom<&jsons::LeafEntry> for Leaf {
+  type Error = Error;
+  fn try_from(le: &jsons::LeafEntry) -> Result<Self, Error> {
+    let leaf_input = base64::decode(&le.leaf_input).map_err(|e| Error::MalformedResponseBody(format!("base64 decode leaf_input: {}", &e)))?;
+    let mut hash_data = Vec::new();
+    hash_data.reserve(1 + leaf_input.len());
+    hash_data.push(0);
+    hash_data.extend_from_slice(&leaf_input);
+    let leaf = Leaf{hash: utils::sha256(&hash_data)};
+    trace!("Reading leaf {}", &utils::u8_to_hex(&leaf.hash));
+    let extra_data = base64::decode(&le.extra_data).map_err(|e| Error::MalformedResponseBody(format!("base64 decode extra_data: {}", &e)))?;
+    /*
+      type MerkleTreeLeaf struct {
+        Version          Version           `tls:"maxval:255"`
+        LeafType         MerkleLeafType    `tls:"maxval:255"`
+        TimestampedEntry *TimestampedEntry `tls:"selector:LeafType,val:0"`
+      }
+    */
+    let ERR_INVALID: Result<Self, Error> = Err(Error::MalformedResponseBody(format!("Invalid leaf data {}", &utils::u8_to_hex(&leaf_input))));
+    if leaf_input.len() < 2 {
+      return ERR_INVALID;
+    }
+    let mut leaf_slice = &leaf_input[..];
+    let version = u8::from_be_bytes([leaf_slice[0]]);
+    let leaf_type = u8::from_be_bytes([leaf_slice[1]]);
+    if version != 0 || leaf_type != 0 {
+      return ERR_INVALID; // TODO should ignore.
+    }
+    leaf_slice = &leaf_slice[2..];
+    /*
+      type TimestampedEntry struct {
+        Timestamp    uint64
+        EntryType    LogEntryType   `tls:"maxval:65535"`
+        X509Entry    *ASN1Cert      `tls:"selector:EntryType,val:0"`
+        PrecertEntry *PreCert       `tls:"selector:EntryType,val:1"`
+        JSONEntry    *JSONDataEntry `tls:"selector:EntryType,val:32768"`
+        Extensions   CTExtensions   `tls:"minlen:0,maxlen:65535"`
+      }
+    */
+    if leaf_slice.len() < 8 + 2 {
+      return ERR_INVALID;
+    }
+    let timestamp = u64::from_be_bytes([leaf_slice[0], leaf_slice[1], leaf_slice[2], leaf_slice[3], leaf_slice[4], leaf_slice[5], leaf_slice[6], leaf_slice[7]]);
+    leaf_slice = &leaf_slice[8..];
+    let entry_type = u16::from_be_bytes([leaf_slice[0], leaf_slice[1]]);
+    leaf_slice = &leaf_slice[2..];
+    match entry_type {
+      0 => { // x509_entry
+        // len is u24
+        if leaf_slice.len() < 3 {
+          return ERR_INVALID;
+        }
+        let len = u32::from_be_bytes([0, leaf_slice[0], leaf_slice[1], leaf_slice[2]]);
+        leaf_slice = &leaf_slice[3..];
+        if leaf_slice.len() < len as usize {
+          return ERR_INVALID;
+        }
+        let data = &leaf_slice[..len as usize]; // DER certificate
+        leaf_slice = &leaf_slice[len as usize..];
+      },
+      1 => { // precert_entry
+        /*
+          type PreCert struct {
+            IssuerKeyHash  [sha256.Size]byte
+            TBSCertificate []byte `tls:"minlen:1,maxlen:16777215"` // DER-encoded TBSCertificate
+          }
+        */
+        if leaf_slice.len() < 32 {
+          return ERR_INVALID;
+        }
+        let issuer_key_hash = &leaf_slice[0..32];
+        leaf_slice = &leaf_slice[32..];
+        if leaf_slice.len() < 3 {
+          return ERR_INVALID;
+        }
+        let len = u32::from_be_bytes([0, leaf_slice[0], leaf_slice[1], leaf_slice[2]]);
+        leaf_slice = &leaf_slice[3..];
+        if leaf_slice.len() < len as usize {
+          return ERR_INVALID;
+        }
+        let data = &leaf_slice[..len as usize]; // DER certificate
+        leaf_slice = &leaf_slice[len as usize..];
+      },
+      _ => {
+        return ERR_INVALID; // TODO should ignore.
+      }
+    }
+    if leaf_slice.len() < 2 {
+      return ERR_INVALID;
+    }
+    let extension_len = u16::from_be_bytes([leaf_slice[0], leaf_slice[1]]);
+    leaf_slice = &leaf_slice[2..];
+    if leaf_slice.len() != extension_len as usize {
+      return ERR_INVALID;
+    }
+    Ok(leaf)
+  }
+}
+
+impl Leaf {
+  pub fn leaf_hash(&self) -> [u8; 32] {
+    self.hash
+  }
 }

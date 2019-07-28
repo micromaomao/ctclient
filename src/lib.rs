@@ -10,6 +10,7 @@
 //!
 //! This project is not a beginner tutorial on how a CT log work. Read [the
 //! RFC](https://tools.ietf.org/html/rfc6962) first.
+#![feature(trait_alias)]
 use reqwest;
 use std::{fs, path, fmt, io};
 use openssl::pkey::PKey;
@@ -18,7 +19,7 @@ pub mod utils;
 pub mod jsons;
 pub mod internal;
 
-use log::info;
+use log::{info, warn};
 
 /// Errors that this library could return.
 #[derive(Debug)]
@@ -46,6 +47,9 @@ pub enum Error {
 
 	/// Server returned an invalid consistency proof. (prev_size, new_size, desc)
 	InvalidConsistencyProof(u64, u64, String),
+
+	/// ConsistencyProofPart::verify failed
+	CannotVerifyTreeData(String),
 }
 
 impl fmt::Display for Error {
@@ -59,6 +63,7 @@ impl fmt::Display for Error {
 			Error::InvalidResponseStatus(response_code) => write!(f, "Server responsed with {} {}", response_code.as_u16(), response_code.as_str()),
 			Error::MalformedResponseBody(desc) => write!(f, "Unable to parse server response: {}", &desc),
 			Error::InvalidConsistencyProof(prev_size, new_size, desc) => write!(f, "Server provided an invalid consistency proof from {} to {}: {}", prev_size, new_size, &desc),
+			Error::CannotVerifyTreeData(desc) => write!(f, "The certificates returned by the server is inconsistent with the perviously provided consistency proof: {}", &desc)
 		}
 	}
 }
@@ -171,14 +176,32 @@ impl CTClient {
 			} else {
 				return Err(Error::InvalidConsistencyProof(self.latest_size, new_tree_size, format!("Server forked! {} and {} both corrospond to tree_size {}", &utils::u8_to_hex(&self.latest_tree_hash), &utils::u8_to_hex(&new_tree_root), new_tree_size)));
 			}
+		} else if new_tree_size < self.latest_size {
+			// Make sure server isn't doing trick with us.
+			internal::check_consistency_proof(&self.http_client, &self.base_url, new_tree_size, self.latest_size, &new_tree_root, &self.latest_tree_hash)?;
+			warn!("{} rolled back? {} -> {}", self.base_url.as_str(), self.latest_size, new_tree_size);
+			return Ok(self.latest_size)
 		}
 		let consistency_proof_parts = internal::check_consistency_proof(&self.http_client, &self.base_url, self.latest_size, new_tree_size, &self.latest_tree_hash, &new_tree_root)?;
 
-		// TODO
+		let i_start = self.latest_size;
+		let mut leafs = internal::get_entries(&self.http_client, &self.base_url, i_start..new_tree_size);
+		let mut leaf_hashes: Vec<[u8; 32]> = Vec::new();
+		leaf_hashes.reserve((new_tree_size - i_start) as usize);
+		for _ in i_start..new_tree_size {
+			let leaf = leafs.next().unwrap()?;
+			leaf_hashes.push(leaf.leaf_hash());
+		}
+		assert_eq!(leaf_hashes.len(), (new_tree_size - i_start) as usize);
+		for proof_part in consistency_proof_parts.into_iter() {
+			assert!(proof_part.subtree.0 >= i_start);
+			assert!(proof_part.subtree.1 <= new_tree_size);
+			proof_part.verify(&leaf_hashes[(proof_part.subtree.0 - i_start) as usize..(proof_part.subtree.1 - i_start) as usize]).map_err(|e| Error::CannotVerifyTreeData(e))?;
+		}
 
 		self.latest_size = new_tree_size;
 		self.latest_tree_hash = new_tree_root;
-		info!("CTClient: {} updated to {} {}", self.base_url.as_str(), new_tree_size, &utils::u8_to_hex(&new_tree_root));
+		info!("CTClient: {} updated to {} {} (read {} leaves)", self.base_url.as_str(), new_tree_size, &utils::u8_to_hex(&new_tree_root), new_tree_size - i_start);
 		Ok(new_tree_size)
 	}
 
