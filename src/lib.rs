@@ -10,7 +10,6 @@
 //!
 //! This project is not a beginner tutorial on how a CT log work. Read [the
 //! RFC](https://tools.ietf.org/html/rfc6962) first.
-#![feature(trait_alias)]
 use reqwest;
 use std::{fs, path, fmt, io};
 use openssl::pkey::PKey;
@@ -19,7 +18,7 @@ pub mod utils;
 pub mod jsons;
 pub mod internal;
 
-use log::{info, warn};
+use log::{info, warn, trace};
 
 /// Errors that this library could return.
 #[derive(Debug)]
@@ -50,6 +49,9 @@ pub enum Error {
 
 	/// ConsistencyProofPart::verify failed
 	CannotVerifyTreeData(String),
+
+	// Something's wrong with the certificate.
+	BadCertificate(String),
 }
 
 impl fmt::Display for Error {
@@ -63,7 +65,8 @@ impl fmt::Display for Error {
 			Error::InvalidResponseStatus(response_code) => write!(f, "Server responsed with {} {}", response_code.as_u16(), response_code.as_str()),
 			Error::MalformedResponseBody(desc) => write!(f, "Unable to parse server response: {}", &desc),
 			Error::InvalidConsistencyProof(prev_size, new_size, desc) => write!(f, "Server provided an invalid consistency proof from {} to {}: {}", prev_size, new_size, &desc),
-			Error::CannotVerifyTreeData(desc) => write!(f, "The certificates returned by the server is inconsistent with the perviously provided consistency proof: {}", &desc)
+			Error::CannotVerifyTreeData(desc) => write!(f, "The certificates returned by the server is inconsistent with the perviously provided consistency proof: {}", &desc),
+			Error::BadCertificate(desc) => write!(f, "The certificate returned by the server has a problem: {}", &desc),
 		}
 	}
 }
@@ -96,7 +99,6 @@ fn new_http_client() -> Result<reqwest::Client, Error> {
 		.connect_timeout(time::Duration::from_secs(5))
 		.tcp_nodelay()
 		.gzip(true)
-		.timeout(time::Duration::from_secs(5))
 		.use_sys_proxy()
 		.default_headers(def_headers)
 		.redirect(reqwest::RedirectPolicy::none())
@@ -188,9 +190,20 @@ impl CTClient {
 		let mut leafs = internal::get_entries(&self.http_client, &self.base_url, i_start..new_tree_size);
 		let mut leaf_hashes: Vec<[u8; 32]> = Vec::new();
 		leaf_hashes.reserve((new_tree_size - i_start) as usize);
-		for _ in i_start..new_tree_size {
-			let leaf = leafs.next().unwrap()?;
-			leaf_hashes.push(leaf.leaf_hash());
+		for i in i_start..new_tree_size {
+			match leafs.next().unwrap() {
+				Ok(leaf) => {
+					leaf_hashes.push(leaf.leaf_hash());
+					self.check_leaf(&leaf)?;
+				},
+				Err(e) => {
+					if let Error::MalformedResponseBody(inner_e) = e {
+						return Err(Error::MalformedResponseBody(format!("While parsing leaf #{}: {}", i, &inner_e)));
+					} else {
+						return Err(e);
+					}
+				}
+			}
 		}
 		assert_eq!(leaf_hashes.len(), (new_tree_size - i_start) as usize);
 		for proof_part in consistency_proof_parts.into_iter() {
@@ -203,6 +216,53 @@ impl CTClient {
 		self.latest_tree_hash = new_tree_root;
 		info!("CTClient: {} updated to {} {} (read {} leaves)", self.base_url.as_str(), new_tree_size, &utils::u8_to_hex(&new_tree_root), new_tree_size - i_start);
 		Ok(new_tree_size)
+	}
+
+	fn check_leaf(&self, leaf: &internal::Leaf) -> Result<(), Error> {
+		let chain: Vec<_> = leaf.x509_chain.iter().map(|der| {
+			openssl::x509::X509::from_der(&der[..])
+		}).collect();
+		for rs in chain.iter() {
+			if let Err(e) = rs {
+				return Err(Error::BadCertificate(format!("While decoding certificate: {}", e)));
+			}
+		}
+		let chain: Vec<_> = chain.into_iter().map(|x| x.unwrap()).collect();
+		if chain.len() <= 1 {
+			return Err(Error::BadCertificate(format!("Empty certificate chain?")));
+		}
+		let mut is_first = true;
+		for cert in chain {
+			// I tried to use openssl to verify the certificate chain here, but the CT
+			// Precertificate Poison prevents it from working. (unhandled critical
+			// extension)
+			let try_common_names: Vec<_> = cert.subject_name().entries_by_nid(openssl::nid::Nid::COMMONNAME).map(|x| x.data().as_utf8()).collect();
+			let mut common_names: Vec<String> = Vec::new();
+			for cn in try_common_names {
+				if let Err(e) = cn {
+					return Err(Error::BadCertificate(format!("While parsing common name: {}", &e)));
+				}
+				common_names.push(String::from(AsRef::<str>::as_ref(&cn.unwrap())));
+			}
+			let mut dns_names: Vec<String> = Vec::new();
+			if let Some(san) = cert.subject_alt_names() {
+				for name in san.iter() {
+					if let Some(name) = name.dnsname() {
+						dns_names.push(String::from(name));
+					} else if let Some(uri) = name.uri() {
+						let url_parsed = reqwest::Url::parse(uri).map_err(|_| Error::BadCertificate(format!("This certificate has a URI SNI, but the URI is not parsable.")))?;
+						if let Some(host) = url_parsed.domain() {
+							dns_names.push(String::from(host));
+						}
+					}
+				}
+			}
+			if is_first {
+				trace!("Check leaf: {:?} ({}, etc...)", &leaf, common_names.get(0).unwrap_or(&String::from("(no common name)")));
+			}
+			is_first = false;
+		}
+		Ok(())
 	}
 
 	pub fn new_from_state_file<P: AsRef<path::Path>>(file_path: P) -> Result<Self, Error> {

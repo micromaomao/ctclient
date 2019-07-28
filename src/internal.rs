@@ -5,7 +5,9 @@ use reqwest;
 use openssl::pkey::PKey;
 use crate::{jsons, utils, Error};
 
-use log::trace;
+use log::{trace, warn};
+
+use std::fmt;
 
 /// Verifies a tls digitally-signed struct (see [the TLS
 /// RFC](https://tools.ietf.org/html/rfc5246#section-4.7) for more info.)
@@ -631,7 +633,9 @@ pub fn get_entries<'a>(client: &'a reqwest::Client, base_url: &'a reqwest::Url, 
 }
 
 pub struct Leaf {
-  hash: [u8; 32],
+  pub hash: [u8; 32],
+  pub is_pre_cert: bool,
+  pub x509_chain: Vec<Vec<u8>>,
 }
 
 use std::convert::TryFrom;
@@ -644,8 +648,9 @@ impl TryFrom<&jsons::LeafEntry> for Leaf {
     hash_data.reserve(1 + leaf_input.len());
     hash_data.push(0);
     hash_data.extend_from_slice(&leaf_input);
-    let leaf = Leaf{hash: utils::sha256(&hash_data)};
-    trace!("Reading leaf {}", &utils::u8_to_hex(&leaf.hash));
+    let hash = utils::sha256(&hash_data);
+    let is_pre_cert;
+    let mut x509_chain;
     let extra_data = base64::decode(&le.extra_data).map_err(|e| Error::MalformedResponseBody(format!("base64 decode extra_data: {}", &e)))?;
     /*
       type MerkleTreeLeaf struct {
@@ -654,7 +659,8 @@ impl TryFrom<&jsons::LeafEntry> for Leaf {
         TimestampedEntry *TimestampedEntry `tls:"selector:LeafType,val:0"`
       }
     */
-    let ERR_INVALID: Result<Self, Error> = Err(Error::MalformedResponseBody(format!("Invalid leaf data {}", &utils::u8_to_hex(&leaf_input))));
+    let ERR_INVALID: Result<Self, Error> = Err(Error::MalformedResponseBody(format!("Invalid leaf data.")));
+    let ERR_INVALID_EXTRA: Result<Self, Error> = Err(Error::MalformedResponseBody(format!("Invalid extra data.")));
     if leaf_input.len() < 2 {
       return ERR_INVALID;
     }
@@ -684,6 +690,7 @@ impl TryFrom<&jsons::LeafEntry> for Leaf {
     leaf_slice = &leaf_slice[2..];
     match entry_type {
       0 => { // x509_entry
+        is_pre_cert = false;
         // len is u24
         if leaf_slice.len() < 3 {
           return ERR_INVALID;
@@ -693,8 +700,34 @@ impl TryFrom<&jsons::LeafEntry> for Leaf {
         if leaf_slice.len() < len as usize {
           return ERR_INVALID;
         }
-        let data = &leaf_slice[..len as usize]; // DER certificate
+        let x509_end = &leaf_slice[..len as usize]; // DER certificate
         leaf_slice = &leaf_slice[len as usize..];
+
+        // Extra data is [][]byte with all length u24.
+        let mut extra_slice = &extra_data[..];
+        if extra_slice.len() < 3 {
+          return ERR_INVALID_EXTRA;
+        }
+        let chain_byte_len = u32::from_be_bytes([0, extra_slice[0], extra_slice[1], extra_slice[2]]);
+        extra_slice = &extra_slice[3..];
+        if extra_slice.len() != chain_byte_len as usize {
+          return ERR_INVALID_EXTRA;
+        }
+        x509_chain = Vec::new();
+        x509_chain.push(Vec::from(x509_end));
+        while extra_slice.len() > 0 {
+          if extra_slice.len() < 3 {
+            return ERR_INVALID_EXTRA;
+          }
+          let len = u32::from_be_bytes([0, extra_slice[0], extra_slice[1], extra_slice[2]]);
+          extra_slice = &extra_slice[3..];
+          if extra_slice.len() < len as usize {
+            return ERR_INVALID_EXTRA;
+          }
+          let data = &extra_slice[..len as usize];
+          extra_slice = &extra_slice[len as usize..];
+          x509_chain.push(Vec::from(data));
+        }
       },
       1 => { // precert_entry
         /*
@@ -703,10 +736,11 @@ impl TryFrom<&jsons::LeafEntry> for Leaf {
             TBSCertificate []byte `tls:"minlen:1,maxlen:16777215"` // DER-encoded TBSCertificate
           }
         */
+        is_pre_cert = true;
         if leaf_slice.len() < 32 {
           return ERR_INVALID;
         }
-        let issuer_key_hash = &leaf_slice[0..32];
+        let _issuer_key_hash = &leaf_slice[0..32];
         leaf_slice = &leaf_slice[32..];
         if leaf_slice.len() < 3 {
           return ERR_INVALID;
@@ -716,8 +750,50 @@ impl TryFrom<&jsons::LeafEntry> for Leaf {
         if leaf_slice.len() < len as usize {
           return ERR_INVALID;
         }
-        let data = &leaf_slice[..len as usize]; // DER certificate
+        let _x509_end = &leaf_slice[..len as usize]; // This is a "TBS" certificate - no signature and can't be parsed by OpenSSL.
         leaf_slice = &leaf_slice[len as usize..];
+
+        /* Extra data:
+          type PrecertChainEntry struct {
+            PreCertificate   ASN1Cert   `tls:"minlen:1,maxlen:16777215"`
+            CertificateChain []ASN1Cert `tls:"minlen:0,maxlen:16777215"`
+          }
+        */
+
+        let mut extra_slice = &extra_data[..];
+        if extra_slice.len() < 3 {
+          return ERR_INVALID_EXTRA;
+        }
+        let pre_cert_len = u32::from_be_bytes([0, extra_slice[0], extra_slice[1], extra_slice[2]]);
+        extra_slice = &extra_slice[3..];
+        if extra_slice.len() < pre_cert_len as usize {
+          return ERR_INVALID_EXTRA;
+        }
+        let pre_cert_data = &extra_slice[..pre_cert_len as usize];
+        extra_slice = &extra_slice[pre_cert_len as usize..];
+        x509_chain = Vec::new();
+        x509_chain.push(Vec::from(pre_cert_data));
+        if extra_slice.len() < 3 {
+          return ERR_INVALID_EXTRA;
+        }
+        let rest_len = u32::from_be_bytes([0, extra_slice[0], extra_slice[1], extra_slice[2]]);
+        extra_slice = &extra_slice[3..];
+        if extra_slice.len() != rest_len as usize {
+          return ERR_INVALID_EXTRA;
+        }
+        while extra_slice.len() > 0 {
+          if extra_slice.len() < 3 {
+            return ERR_INVALID_EXTRA;
+          }
+          let len = u32::from_be_bytes([0, extra_slice[0], extra_slice[1], extra_slice[2]]);
+          extra_slice = &extra_slice[3..];
+          if extra_slice.len() < len as usize {
+            return ERR_INVALID_EXTRA;
+          }
+          let data = &extra_slice[..len as usize];
+          extra_slice = &extra_slice[len as usize..];
+          x509_chain.push(Vec::from(data));
+        }
       },
       _ => {
         return ERR_INVALID; // TODO should ignore.
@@ -731,12 +807,22 @@ impl TryFrom<&jsons::LeafEntry> for Leaf {
     if leaf_slice.len() != extension_len as usize {
       return ERR_INVALID;
     }
-    Ok(leaf)
+    Ok(Leaf{hash, is_pre_cert, x509_chain})
   }
 }
 
 impl Leaf {
   pub fn leaf_hash(&self) -> [u8; 32] {
     self.hash
+  }
+}
+impl fmt::Debug for Leaf {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "Leaf({})", &utils::u8_to_hex(&self.hash))?;
+    if self.is_pre_cert {
+      write!(f, " (pre_cert)")?;
+    }
+    write!(f, " chain length = {}", self.x509_chain.len())?;
+    Ok(())
   }
 }
