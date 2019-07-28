@@ -1,15 +1,73 @@
-//! Ct log client library.
+//! Certificate Transparency Log client for monitoring and gossiping.
 //!
-//! All `pub_key` are in der format, which is the format returned by google's
-//! trusted log list (you need to de-base64 yourself).
+//! The source code of this project contains some best-effort explanation
+//! comments for others trying to implement such a client to read - as of 2019,
+//! the documentation that exists out there are (in my opinion) pretty lacking,
+//! and I had some bad time trying to implement this.
+//!
+//! All `pub_key` are in DER format, which is the format returned (in base64)
+//! by google's trusted log list. (No one told me this).
+//!
+//! This project is not a beginner tutorial on how a CT log work. Read [the
+//! RFC](https://tools.ietf.org/html/rfc6962) first.
 use reqwest;
-use base64;
-use openssl;
+use std::{fs, path, fmt, io};
 use openssl::pkey::PKey;
-use std::{fs, path};
 
-mod utils;
+pub mod utils;
+pub mod jsons;
+pub mod internal;
 
+use log::info;
+
+/// Errors that this library could return.
+#[derive(Debug)]
+pub enum Error {
+	/// Some odd stuff happened.
+	Unknown(String),
+
+	/// You provided something bad.
+	InvalidArgument(String),
+
+	/// File IO error
+	FileIO(path::PathBuf, io::Error),
+
+	/// Network IO error
+	NetIO(reqwest::Error),
+
+	/// The CT server provided us with invalid signature.
+	InvalidSignature(String),
+
+	/// The CT server responsed with something other than 200.
+	InvalidResponseStatus(reqwest::StatusCode),
+
+	/// Server responsed with something bad (e.g. malformed JSON)
+	MalformedResponseBody(String),
+
+	/// Server returned an invalid consistency proof. (prev_size, new_size, desc)
+	InvalidConsistencyProof(u64, u64, String),
+}
+
+impl fmt::Display for Error {
+	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+		match self {
+			Error::Unknown(desc) => write!(f, "{}", desc),
+			Error::InvalidArgument(desc) => write!(f, "Invalid argument: {}", desc),
+			Error::FileIO(path, e) => write!(f, "{}: {}", path.to_string_lossy(), &e),
+			Error::NetIO(e) => write!(f, "Network IO error: {}", &e),
+			Error::InvalidSignature(desc) => write!(f, "Invalid signature received: {}", &desc),
+			Error::InvalidResponseStatus(response_code) => write!(f, "Server responsed with {} {}", response_code.as_u16(), response_code.as_str()),
+			Error::MalformedResponseBody(desc) => write!(f, "Unable to parse server response: {}", &desc),
+			Error::InvalidConsistencyProof(prev_size, new_size, desc) => write!(f, "Server provided an invalid consistency proof from {} to {}: {}", prev_size, new_size, &desc),
+		}
+	}
+}
+
+/// A stateful CT monitor.
+///
+/// It remembers a last checked tree root, so that it only checks the newly added
+/// certificates. It's state can be load from / stored to a file (see
+/// [`new_from_state_file`](crate::CTClient::new_from_state_file)).
 pub struct CTClient {
 	base_url: reqwest::Url,
 	pub_key: PKey<openssl::pkey::Public>,
@@ -18,20 +76,20 @@ pub struct CTClient {
 	latest_tree_hash: [u8; 32],
 }
 
-use std::fmt;
 impl fmt::Debug for CTClient {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		write!(f, "CT log {}: current root = {}, size = {}", self.base_url, utils::u8_to_hex(&self.latest_tree_hash[..]), self.latest_size)
 	}
 }
 
-fn new_http_client() -> Result<reqwest::Client, String> {
+fn new_http_client() -> Result<reqwest::Client, Error> {
 	use std::time;
 	let mut def_headers = reqwest::header::HeaderMap::new();
 	def_headers.insert("User-Agent", reqwest::header::HeaderValue::from_static("rust-ctclient"));
 	match reqwest::Client::builder()
 		.cookie_store(false)
 		.connect_timeout(time::Duration::from_secs(5))
+		.tcp_nodelay()
 		.gzip(true)
 		.timeout(time::Duration::from_secs(5))
 		.use_sys_proxy()
@@ -39,117 +97,8 @@ fn new_http_client() -> Result<reqwest::Client, String> {
 		.redirect(reqwest::RedirectPolicy::none())
 		.build() {
 			Ok(r) => Ok(r),
-			Err(e) => Err(format!("{}", &e))
+			Err(e) => Err(Error::Unknown(format!("{}", &e)))
 		}
-}
-
-mod jsons;
-
-/// Verifies a tls digitally-signed struct (I don't understand this either; see
-/// RFC https://tools.ietf.org/html/rfc5246#section-4.7 for more info.)
-///
-/// ## Params
-///
-/// * `dss`: the DigitallySigned struct, encoded in binary. Often returned as a
-/// base64 "signature" json field by the CT server. De-base64 yourself before
-/// calling.
-///
-/// * `pub_key`: use
-/// [openssl::pkey::PKey::public_key_from_der](openssl::pkey::PKey::public_key_from_der)
-/// to turn the key provided by google's ct log list into openssl key object.
-///
-/// * `data`: the stuff to verify against. Server should have signed this.
-fn verify_dss(dss: &[u8], pub_key: &PKey<openssl::pkey::Public>, data: &[u8]) -> Result<(), String> {
-	// First two byte type, second two byte length (of the rest).
-
-	if dss.len() < 4 {
-		return Err(format!("dss.len ({}) must be at least 4.", dss.len()));
-	}
-	// Refer to https://docs.rs/rustls/0.15.2/src/rustls/msgs/handshake.rs.html#1546
-	let sig_type = u16::from_be_bytes([dss[0], dss[1]]);
-	let length = u16::from_be_bytes([dss[2], dss[3]]);
-	let rest = &dss[4..];
-	if rest.len() != length as usize {
-		return Err(format!("it says there that there is {} bytes in the signature part, but I see {}.", length, rest.len()));
-	}
-
-	// Refer to https://docs.rs/rustls/0.15.2/src/rustls/msgs/enums.rs.html#720
-	const SIGSCHEME_ECDSA_NISTP256_SHA256: u16 = 0x0403;
-	const SIGSCHEME_RSA_PKCS1_SHA256: u16 = 0x0401;
-	match sig_type {
-		SIGSCHEME_ECDSA_NISTP256_SHA256 => {
-			if pub_key.id() != openssl::pkey::Id::EC {
-				return Err(format!("Signature is EC, but key is {:?}", pub_key.id()));
-			}
-		}
-		SIGSCHEME_RSA_PKCS1_SHA256 => {
-			if pub_key.id() != openssl::pkey::Id::RSA {
-				return Err(format!("Signature is RSA, but key is {:?}", pub_key.id()));
-			}
-		}
-		_ => {
-			return Err(format!("Unknow signature scheme {:2x}", sig_type));
-		}
-	}
-
-	let mut verifier = openssl::sign::Verifier::new(openssl::hash::MessageDigest::sha256(), pub_key).map_err(|e| format!("Unable to EVP_DigestVerifyInit: {}", &e))?;
-	if sig_type == SIGSCHEME_RSA_PKCS1_SHA256 {
-		verifier.set_rsa_padding(openssl::rsa::Padding::PKCS1).map_err(|e| format!("EVP_PKEY_CTX_set_rsa_padding: {}", &e))?;
-	}
-	verifier.update(data).map_err(|e| format!("Unable to EVP_DigestUpdate: {}", &e))?;
-	if !verifier.verify(rest).map_err(|e| format!("Unable to EVP_DigestVerifyFinal: {}", &e))? {
-		return Err(format!("Invalid signature."));
-	}
-	Ok(())
-}
-
-#[test]
-fn verify_dss_test() {
-	let key = PKey::public_key_from_der(&utils::hex_to_u8("3056301006072a8648ce3d020106052b8104000a0342000412c022d1b5cab048f419d46f111743cea4fcd54a05228d14cecd9cc1d120e4cc3e22e8481e5ccc3db16273a8d981ac144306d644a4227468fccd6580563ec8bd")[..]).unwrap();
-	verify_dss(&utils::hex_to_u8("040300473045022100ba6da0fb4d4440965dd1d096212da95880320113320ddc5202a0b280ac518349022005bb17637d4ed06facb4af5b4b9b9083210474998ac33809a6e10c9352032055"), &key, b"hello").unwrap();
-	verify_dss(&utils::hex_to_u8("0403004830460221009857dc5e2bcc0b67059a5bde9ead6a36614ab315423c0b2e4762ba7aca3f0181022100eab3af33367cb89d556c17c1ce7de1c2b8c2b80d709d0c3cbb45c8acc6809d1d"), &key, b"not hello").unwrap();
-	verify_dss(&utils::hex_to_u8("0403004530460221009857dc5e2bcc0b67059a5bde9ead6a36614ab315423c0b2e4762ba7aca3f0181022100eab3af33367cb89d556c17c1ce7de1c2b8c2b80d709d0c3cbb45c8acc6809d1d"), &key, b"hello").expect_err("");
-
-	// Don't panic.
-	verify_dss(&utils::hex_to_u8(""), &key, b"hello").expect_err("");
-	verify_dss(&utils::hex_to_u8("00"), &key, b"hello").expect_err("");
-	verify_dss(&utils::hex_to_u8("0001"), &key, b"hello").expect_err("");
-	verify_dss(&utils::hex_to_u8("000102"), &key, b"hello").expect_err("");
-	verify_dss(&utils::hex_to_u8("00010203"), &key, b"hello").expect_err("");
-	verify_dss(&utils::hex_to_u8("0001020304"), &key, b"hello").expect_err("");
-	verify_dss(&utils::hex_to_u8("000102030405"), &key, b"hello").expect_err("");
-}
-
-/// Check and verify signed tree head
-fn check_tree_head(client: &reqwest::Client, base_url: &reqwest::Url, pub_key: &PKey<openssl::pkey::Public>) -> Result<(u64, [u8; 32]), String> {
-	let mut response = client.get(base_url.join("ct/v1/get-sth").map_err(|e| format!("Url failure"))?).send().map_err(|e| format!("Error getting ct/v1/get-sth: {}", &e))?;
-	if response.status().as_u16() != 200 {
-		return Err(format!("got status {}", response.status()));
-	}
-	let response: jsons::STH = response.json().map_err(|e| format!("Unable to parse response JSON: {}", &e))?;
-	let mut verify_body: Vec<u8> = Vec::new();
-	/*
-		From go source:
-		type TreeHeadSignature struct {
-			Version        Version       `tls:"maxval:255"`
-			SignatureType  SignatureType `tls:"maxval:255"` // == TreeHashSignatureType
-			Timestamp      uint64
-			TreeSize       uint64
-			SHA256RootHash SHA256Hash
-		}
-	*/
-	verify_body.push(0); // Version = 0
-	verify_body.push(1); // SignatureType = TreeHashSignatureType
-	verify_body.extend_from_slice(&response.timestamp.to_be_bytes()); // Timestamp
-	verify_body.extend_from_slice(&response.tree_size.to_be_bytes()); // TreeSize
-	let root_hash = base64::decode(&response.sha256_root_hash).map_err(|e| format!("base64 decode failure on root sha256: {}", &e))?;
-	if root_hash.len() != 32 {
-		return Err(format!("Invalid server response: sha256_root_hash should have length of 32."));
-	}
-	verify_body.extend_from_slice(&root_hash[..]);
-	let dss = base64::decode(&response.tree_head_signature).map_err(|e| format!("base64 decode failure on signature: {}", &e))?;
-	verify_dss(&dss[..], pub_key, &verify_body[..]).map_err(|e| format!("Signature verification failure: {}", &e))?;
-	Ok((response.tree_size, unsafe { *(&root_hash[..] as *const [u8] as *const [u8; 32]) }))
 }
 
 impl CTClient {
@@ -157,19 +106,19 @@ impl CTClient {
 	///
 	/// Pervious certificates in this log will not be checked. Useful for testing
 	/// but could result in missing some important stuff. Not recommended for
-	/// production. See `new_from_state_file`.
+	/// production. See [`new_from_state_file`](crate::CTClient::new_from_state_file).
 	///
-	/// ## Panics
+	/// ## Errors
 	///
 	/// * If `base_url` does not ends with `/`.
-	pub fn new_from_latest_th(base_url: &str, pub_key: &[u8]) -> Result<Self, String> {
+	pub fn new_from_latest_th(base_url: &str, pub_key: &[u8]) -> Result<Self, Error> {
 		if !base_url.ends_with("/") {
-			panic!("baseUrl must end with /");
+			return Err(Error::InvalidArgument(format!("baseUrl must end with /")));
 		}
-		let base_url = reqwest::Url::parse(base_url).map_err(|e| format!("Unable to parse url: {}", &e))?;
+		let base_url = reqwest::Url::parse(base_url).map_err(|e| Error::InvalidArgument(format!("Unable to parse url: {}", &e)))?;
 		let http_client = new_http_client()?;
-		let evp_pkey = PKey::public_key_from_der(pub_key).map_err(|e| format!("Error parsing public key: {}", &e))?;
-		let (current_size, root_hash) = check_tree_head(&http_client, &base_url, &evp_pkey).map_err(|e| format!("While checking tree root: {}", &e))?;
+		let evp_pkey = PKey::public_key_from_der(pub_key).map_err(|e| Error::InvalidArgument(format!("Error parsing public key: {}", &e)))?;
+		let (current_size, root_hash) = internal::check_tree_head(&http_client, &base_url, &evp_pkey)?;
 		Ok(CTClient{
 			base_url,
 			pub_key: evp_pkey,
@@ -179,13 +128,63 @@ impl CTClient {
 		})
 	}
 
-	pub fn update(&mut self) -> Result<usize, String> {
-		unimplemented!();
+	/// Construct a new `CTClient` that will check all certificates included after
+	/// the given tree state.
+	///
+	/// Pervious certificates in this log will not be checked, so make sure to check
+	/// them manually (i.e. with crt.sh). For production,
+	/// [`new_from_state_file`](crate::CTClient::new_from_state_file) is recommended
+	/// to avoid duplicate work (checking those which has already been checked in
+	/// pervious run).
+	pub fn new_from_perv_tree_hash(base_url: &str, pub_key: &[u8], tree_hash: [u8; 32], tree_size: u64) -> Result<Self, Error> {
+		if !base_url.ends_with("/") {
+			return Err(Error::InvalidArgument(format!("baseUrl must end with /")));
+		}
+		let base_url = reqwest::Url::parse(base_url).map_err(|e| Error::InvalidArgument(format!("Unable to parse url: {}", &e)))?;
+		let http_client = new_http_client()?;
+		let evp_pkey = PKey::public_key_from_der(pub_key).map_err(|e| Error::InvalidArgument(format!("Error parsing public key: {}", &e)))?;
+		Ok(CTClient{
+			base_url,
+			pub_key: evp_pkey,
+			http_client,
+			latest_size: tree_size,
+			latest_tree_hash: tree_hash,
+		})
 	}
 
-	pub fn new_from_state_file<P: AsRef<path::Path>>(file_path: P) -> Result<Self, String> {
+	/// Get the last checked tree head. Returns `(tree_size, root_hash)`.
+	pub fn get_checked_tree_head(&self) -> (u64, [u8; 32]) {
+		(self.latest_size, self.latest_tree_hash)
+	}
+
+	/// Get the underlying http client used to call CT APIs.
+	pub fn get_reqwest_client(&self) -> &reqwest::Client {
+		&self.http_client
+	}
+
+	pub fn update(&mut self) -> Result<u64, Error> {
+		let (new_tree_size, new_tree_root) = internal::check_tree_head(&self.http_client, &self.base_url, &self.pub_key)?;
+		if new_tree_size == self.latest_size {
+			if new_tree_root == self.latest_tree_hash {
+				info!("CTClient: {} remained the same.", self.base_url.as_str());
+				return Ok(new_tree_size);
+			} else {
+				return Err(Error::InvalidConsistencyProof(self.latest_size, new_tree_size, format!("Server forked! {} and {} both corrospond to tree_size {}", &utils::u8_to_hex(&self.latest_tree_hash), &utils::u8_to_hex(&new_tree_root), new_tree_size)));
+			}
+		}
+		let consistency_proof_parts = internal::check_consistency_proof(&self.http_client, &self.base_url, self.latest_size, new_tree_size, &self.latest_tree_hash, &new_tree_root)?;
+
+		// TODO
+
+		self.latest_size = new_tree_size;
+		self.latest_tree_hash = new_tree_root;
+		info!("CTClient: {} updated to {} {}", self.base_url.as_str(), new_tree_size, &utils::u8_to_hex(&new_tree_root));
+		Ok(new_tree_size)
+	}
+
+	pub fn new_from_state_file<P: AsRef<path::Path>>(file_path: P) -> Result<Self, Error> {
 		let save_file = fs::OpenOptions::new().create(false).read(true).write(true).open(&file_path)
-			.map_err(|e| format!("Unable to open {}: {}", file_path.as_ref().to_str().unwrap_or("???"), &e))?;
+			.map_err(|e| Error::FileIO(file_path.as_ref().to_path_buf(), e))?;
 		unimplemented!();
 	}
 }
