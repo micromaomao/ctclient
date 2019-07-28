@@ -541,6 +541,9 @@ pub fn check_consistency_proof(client: &reqwest::Client, base_url: &reqwest::Url
 use std::ops::Range;
 use std::iter::Iterator;
 
+/// An iterator over `Result<Leaf, Error>`.
+///
+/// After the first Err result, the iterator will not produce anything else.
 pub struct GetEntriesIter<'a> {
   requested_range: Range<u64>,
   done: bool,
@@ -559,7 +562,7 @@ impl<'a> GetEntriesIter<'a> {
       next_index: range.start,
       requested_range: range,
       done: false,
-      batch_size: 10240,
+      batch_size: 500,
 
       client, base_url
     }
@@ -623,18 +626,41 @@ impl<'a> Iterator for GetEntriesIter<'a> {
       }
     }
   }
+
+  fn size_hint(&self) -> (usize, Option<usize>) {
+    if self.done {
+      return (0, Some(0));
+    }
+    let rem_size = self.requested_range.end - self.next_index;
+    if rem_size >= 1 {
+      return (1, Some(rem_size as usize))
+    } else {
+      return (0, Some(0))
+    }
+  }
 }
 
 /// Request leaf entries from the CT log. Does not verify if these entries are
 /// consistent with the tree or anything like that. Returns an iterator over the
 /// leaves.
+///
+/// After the first Err result, the iterator will not produce anything else.
+///
+/// Uses `O(1)` memory itself.
 pub fn get_entries<'a>(client: &'a reqwest::Client, base_url: &'a reqwest::Url, range: Range<u64>) -> GetEntriesIter<'a> {
   GetEntriesIter::new(range, client, base_url)
 }
 
+/// A parsed leaf.
+///
+/// Parse a JSON get-entries response to this with
+/// `TryFrom<&jsons::LeafEntry>::try_from`.
 pub struct Leaf {
+  /// What they call "leaf hash".
   pub hash: [u8; 32],
   pub is_pre_cert: bool,
+  /// The first cert is the end entity cert (or pre cert, if `is_pre_cert` is
+  /// true), and the last is the root CA.
   pub x509_chain: Vec<Vec<u8>>,
 }
 
@@ -811,18 +837,12 @@ impl TryFrom<&jsons::LeafEntry> for Leaf {
   }
 }
 
-impl Leaf {
-  pub fn leaf_hash(&self) -> [u8; 32] {
-    self.hash
-  }
-}
 impl fmt::Debug for Leaf {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "Leaf({})", &utils::u8_to_hex(&self.hash))?;
     if self.is_pre_cert {
       write!(f, " (pre_cert)")?;
     }
-    write!(f, " chain length = {}", self.x509_chain.len())?;
     Ok(())
   }
 }

@@ -169,6 +169,12 @@ impl CTClient {
 		&self.http_client
 	}
 
+ /// Fetch the latest tree root, check all the new certificates, and update our
+ /// internal "last checked tree root".
+ ///
+ /// This function should never panic, no matter what the server does to us.
+ ///
+ /// Returns the new tree size.
 	pub fn update(&mut self) -> Result<u64, Error> {
 		let (new_tree_size, new_tree_root) = internal::check_tree_head(&self.http_client, &self.base_url, &self.pub_key)?;
 		if new_tree_size == self.latest_size {
@@ -193,7 +199,7 @@ impl CTClient {
 		for i in i_start..new_tree_size {
 			match leafs.next().unwrap() {
 				Ok(leaf) => {
-					leaf_hashes.push(leaf.leaf_hash());
+					leaf_hashes.push(leaf.hash);
 					self.check_leaf(&leaf)?;
 				},
 				Err(e) => {
@@ -218,7 +224,9 @@ impl CTClient {
 		Ok(new_tree_size)
 	}
 
-	fn check_leaf(&self, leaf: &internal::Leaf) -> Result<(), Error> {
+ /// Called by [`Self::update`](crate::CTClient::update) for each leaf received
+ /// to check the certificates. Usually no need to call yourself.
+	pub fn check_leaf(&self, leaf: &internal::Leaf) -> Result<(), Error> {
 		let chain: Vec<_> = leaf.x509_chain.iter().map(|der| {
 			openssl::x509::X509::from_der(&der[..])
 		}).collect();
