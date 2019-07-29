@@ -90,23 +90,7 @@ impl fmt::Debug for CTClient {
 	}
 }
 
-fn new_http_client() -> Result<reqwest::Client, Error> {
-	use std::time;
-	let mut def_headers = reqwest::header::HeaderMap::new();
-	def_headers.insert("User-Agent", reqwest::header::HeaderValue::from_static("rust-ctclient"));
-	match reqwest::Client::builder()
-		.cookie_store(false)
-		.connect_timeout(time::Duration::from_secs(5))
-		.tcp_nodelay()
-		.gzip(true)
-		.use_sys_proxy()
-		.default_headers(def_headers)
-		.redirect(reqwest::RedirectPolicy::none())
-		.build() {
-			Ok(r) => Ok(r),
-			Err(e) => Err(Error::Unknown(format!("{}", &e)))
-		}
-}
+use internal::new_http_client;
 
 impl CTClient {
 	/// Construct a new `CTClient` instance, and fetch the latest tree root.

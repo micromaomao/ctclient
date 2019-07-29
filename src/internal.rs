@@ -9,6 +9,28 @@ use log::{trace, warn};
 
 use std::fmt;
 
+/// Construct a new [reqwest::Client](reqwest::Client) to be used with the
+/// functions in this module. You don't necessary need to use this.
+///
+/// The client constructed will not store cookie or follow redirect.
+pub fn new_http_client() -> Result<reqwest::Client, Error> {
+	use std::time;
+	let mut def_headers = reqwest::header::HeaderMap::new();
+	def_headers.insert("User-Agent", reqwest::header::HeaderValue::from_static("rust-ctclient"));
+	match reqwest::Client::builder()
+		.cookie_store(false)
+		.connect_timeout(time::Duration::from_secs(5))
+		.tcp_nodelay()
+		.gzip(true)
+		.use_sys_proxy()
+		.default_headers(def_headers)
+		.redirect(reqwest::RedirectPolicy::none())
+		.build() {
+			Ok(r) => Ok(r),
+			Err(e) => Err(Error::Unknown(format!("{}", &e)))
+		}
+}
+
 /// Verifies a tls digitally-signed struct (see [the TLS
 /// RFC](https://tools.ietf.org/html/rfc5246#section-4.7) for more info.)
 ///
