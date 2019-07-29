@@ -1,0 +1,31 @@
+
+[package]
+name = "ctclient-fuzz"
+version = "0.0.1"
+authors = ["Automatically generated"]
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies.ctclient]
+path = ".."
+[dependencies.libfuzzer-sys]
+git = "https://github.com/rust-fuzz/libfuzzer-sys.git"
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+[[bin]]
+name = "ctclient_from_bytes"
+path = "fuzz_targets/ctclient_from_bytes.rs"
+
+
+[[bin]]
+name = "leaf_parsing"
+path = "fuzz_targets/leaf_parsing.rs"
+
+[[bin]]
+name = "leaf_extra_data_parsing"
+path = "fuzz_targets/leaf_extra_data_parsing.rs"

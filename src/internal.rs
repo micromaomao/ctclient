@@ -686,20 +686,15 @@ pub struct Leaf {
   pub x509_chain: Vec<Vec<u8>>,
 }
 
-use std::convert::TryFrom;
-
-impl TryFrom<&jsons::LeafEntry> for Leaf {
-  type Error = Error;
-  fn try_from(le: &jsons::LeafEntry) -> Result<Self, Error> {
-    let leaf_input = base64::decode(&le.leaf_input).map_err(|e| Error::MalformedResponseBody(format!("base64 decode leaf_input: {}", &e)))?;
+impl Leaf {
+  pub fn from_raw(leaf_input: &[u8], extra_data: &[u8]) -> Result<Self, Error> {
     let mut hash_data = Vec::new();
     hash_data.reserve(1 + leaf_input.len());
     hash_data.push(0);
-    hash_data.extend_from_slice(&leaf_input);
+    hash_data.extend_from_slice(leaf_input);
     let hash = utils::sha256(&hash_data);
     let is_pre_cert;
     let mut x509_chain;
-    let extra_data = base64::decode(&le.extra_data).map_err(|e| Error::MalformedResponseBody(format!("base64 decode extra_data: {}", &e)))?;
     /*
       type MerkleTreeLeaf struct {
         Version          Version           `tls:"maxval:255"`
@@ -856,6 +851,17 @@ impl TryFrom<&jsons::LeafEntry> for Leaf {
       return ERR_INVALID;
     }
     Ok(Leaf{hash, is_pre_cert, x509_chain})
+  }
+}
+
+use std::convert::TryFrom;
+
+impl TryFrom<&jsons::LeafEntry> for Leaf {
+  type Error = Error;
+  fn try_from(le: &jsons::LeafEntry) -> Result<Self, Error> {
+    let leaf_input = base64::decode(&le.leaf_input).map_err(|e| Error::MalformedResponseBody(format!("base64 decode leaf_input: {}", &e)))?;
+    let extra_data = base64::decode(&le.extra_data).map_err(|e| Error::MalformedResponseBody(format!("base64 decode extra_data: {}", &e)))?;
+    Leaf::from_raw(&leaf_input, &extra_data)
   }
 }
 
