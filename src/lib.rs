@@ -11,7 +11,7 @@
 //! This project is not a beginner tutorial on how a CT log work. Read [the
 //! RFC](https://tools.ietf.org/html/rfc6962) first.
 use reqwest;
-use std::{fs, path, fmt, io};
+use std::{path, fmt, io};
 use openssl::pkey::PKey;
 
 pub mod utils;
@@ -74,8 +74,8 @@ impl fmt::Display for Error {
 /// A stateful CT monitor.
 ///
 /// It remembers a last checked tree root, so that it only checks the newly added
-/// certificates. It's state can be load from / stored to a file (see
-/// [`new_from_state_file`](crate::CTClient::new_from_state_file)).
+/// certificates. It's state can be load from / stored as a `[u8]`, which you can
+/// then e.g. store in a file / database.
 pub struct CTClient {
 	base_url: reqwest::Url,
 	pub_key: PKey<openssl::pkey::Public>,
@@ -160,6 +160,7 @@ impl CTClient {
  ///
  /// Returns the new tree size.
 	pub fn update(&mut self) -> Result<u64, Error> {
+		let mut delaycheck = std::time::Instant::now();
 		let (new_tree_size, new_tree_root) = internal::check_tree_head(&self.http_client, &self.base_url, &self.pub_key)?;
 		if new_tree_size == self.latest_size {
 			if new_tree_root == self.latest_tree_hash {
@@ -193,6 +194,10 @@ impl CTClient {
 						return Err(e);
 					}
 				}
+			}
+			if delaycheck.elapsed() > std::time::Duration::from_secs(1) {
+				info!("Catching up: {} / {}", i, new_tree_size);
+				delaycheck = std::time::Instant::now();
 			}
 		}
 		assert_eq!(leaf_hashes.len(), (new_tree_size - i_start) as usize);
@@ -257,9 +262,100 @@ impl CTClient {
 		Ok(())
 	}
 
-	pub fn new_from_state_file<P: AsRef<path::Path>>(file_path: P) -> Result<Self, Error> {
-		let save_file = fs::OpenOptions::new().create(false).read(true).write(true).open(&file_path)
-			.map_err(|e| Error::FileIO(file_path.as_ref().to_path_buf(), e))?;
-		unimplemented!();
+	pub fn as_bytes(&self) -> Result<Vec<u8>, Error> {
+		// Scheme: (All integers are in big-endian, fixed array don't specify length)
+		// [Version: u8] [base_url in UTF-8] 0x00 [tree_size: u64] [tree_hash: [u8; 32]] [len of pub_key: u32] [pub_key: [u8]: DER public key for this log] [sha256 of everything seen before: [u8; 32]]
+		let mut v = Vec::new();
+		v.push(0u8); // Version = development
+		let url_bytes = self.base_url.as_str().as_bytes();
+		assert!(!url_bytes.contains(&0u8));
+		v.extend_from_slice(url_bytes);
+		v.push(0u8);
+		v.extend_from_slice(&u64::to_be_bytes(self.latest_size));
+		assert_eq!(self.latest_tree_hash.len(), 32);
+		v.extend_from_slice(&self.latest_tree_hash);
+		let pub_key = self.pub_key.public_key_to_der().map_err(|e| Error::Unknown(format!("While encoding public key: {}", &e)))?;
+		assert!(pub_key.len() < std::u32::MAX as usize);
+		v.extend_from_slice(&u32::to_be_bytes(pub_key.len() as u32));
+		v.extend_from_slice(&pub_key);
+		v.extend_from_slice(&utils::sha256(&v));
+		Ok(v)
 	}
+
+	pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
+		use std::convert::TryInto;
+		let EINVAL = Err(Error::InvalidArgument(format!("The bytes are invalid.")));
+		let mut input = bytes;
+		if input.len() < 1 {
+			return EINVAL;
+		}
+		let version = input[0];
+		input = &input[1..];
+		if version != 0 {
+			return Err(Error::InvalidArgument(format!("The bytes are encoded by a ctclient of higher version.")));
+		}
+		let base_url_len = match input.iter().position(|x| *x == 0) {
+			Some(k) => k,
+			None => return EINVAL
+		};
+		let base_url = std::str::from_utf8(&input[..base_url_len]).map_err(|e| Error::InvalidArgument(format!("Invalid UTF-8 in base_url: {}", &e)))?;
+		input = &input[base_url_len + 1..];
+		if input.len() < 8 {
+			return EINVAL;
+		}
+		let tree_size = u64::from_be_bytes(input[..8].try_into().unwrap());
+		input = &input[8..];
+		if input.len() < 32 {
+			return EINVAL;
+		}
+		let tree_hash: [u8; 32] = input[..32].try_into().unwrap();
+		input = &input[32..];
+		if input.len() < 4 {
+			return EINVAL;
+		}
+		let len_pub_key = u32::from_be_bytes(input[..4].try_into().unwrap());
+		input = &input[4..];
+		if input.len() < len_pub_key as usize {
+			return EINVAL;
+		}
+		let pub_key = &input[..len_pub_key as usize];
+		input = &input[len_pub_key as usize..];
+		if input.len() < 32 {
+			return EINVAL;
+		}
+		let checksum: [u8; 32] = input[..32].try_into().unwrap();
+		input = &input[32..];
+		if input.len() > 0 {
+			return EINVAL;
+		}
+		let expect_checksum = utils::sha256(&bytes[..bytes.len() - 32]);
+		#[cfg(not(fuzzing))] {
+			if checksum != expect_checksum {
+				return EINVAL;
+			}
+		}
+		let pub_key = openssl::pkey::PKey::<openssl::pkey::Public>::public_key_from_der(pub_key).map_err(|e| Error::InvalidArgument(format!("Can't parse public key: {}", &e)))?;
+		Ok(CTClient{
+			base_url: reqwest::Url::parse(base_url).map_err(|e| Error::InvalidArgument(format!("Unable to parse base_url: {}", &e)))?,
+			pub_key,
+			http_client: new_http_client()?,
+			latest_size: tree_size,
+			latest_tree_hash: tree_hash,
+		})
+	}
+}
+
+#[test]
+fn as_bytes_test() {
+	let c = CTClient::new_from_latest_th("https://ct.googleapis.com/logs/argon2019/", &utils::hex_to_u8("3059301306072a8648ce3d020106082a8648ce3d030107034200042373109be1f35ef6986b6995961078ce49dbb404fc712c5a92606825c04a1aa1b0612d1b8714a9baf00133591d0530e94215e755d72af8b4a2ba45c946918756")).unwrap();
+	let mut bytes = c.as_bytes().unwrap();
+	println!("bytes: {}", &base64::encode(&bytes));
+	let mut c_clone = CTClient::from_bytes(&bytes).unwrap();
+	assert_eq!(c.latest_size, c_clone.latest_size);
+	assert_eq!(c.latest_tree_hash, c_clone.latest_tree_hash);
+	assert_eq!(c.base_url, c_clone.base_url);
+	c_clone.update().unwrap(); // test public key
+	let len = bytes.len();
+	bytes[len - 1] ^= 1;
+	CTClient::from_bytes(&bytes).expect_err("");
 }
