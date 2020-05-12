@@ -222,7 +222,7 @@ impl CTClient {
 						}
 					}
 					if delaycheck.elapsed() > std::time::Duration::from_secs(1) {
-						info!("Catching up: {} / {}", i, new_tree_size);
+						info!("Catching up: {} / {} ({}%)", i, new_tree_size, ((i - i_start) * 1000 / (new_tree_size - i_start)) as f32 / 10f32);
 						delaycheck = std::time::Instant::now();
 					}
 				}
@@ -287,7 +287,8 @@ impl CTClient {
 					// TODO: determine if cn is a domain name
 					dns_names.push(cn.clone());
 				}
-				trace!("Check leaf: {:?} ({}, etc...)", &leaf, common_names.get(0).unwrap_or(&String::from("(no common name)")));
+				let expiry = cert.not_after();
+				trace!("Check leaf: {:?} ({}, etc...) not after = {}", &leaf, common_names.get(0).unwrap_or(&String::from("(no common name)")), expiry);
 			}
 			is_first = false;
 		}
