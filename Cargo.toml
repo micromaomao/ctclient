@@ -1,10 +1,11 @@
 [package]
 name = "ctclient"
+description = "Certificate Transparency Log client for monitoring and gossiping"
+license = "MIT"
+repository = "https://github.com/micromaomao/ctclient"
 version = "0.1.0"
 authors = ["Mao Wtm <m@maowtm.org>"]
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [[bin]]
 name = "ctclient"

@@ -8,9 +8,8 @@
 //! All `pub_key` are in DER format, which is the format returned (in base64)
 //! by google's trusted log list. (No one told me this).
 //!
-//! This project is not a beginner tutorial on how a CT log work. Read [the
+//! This project is not a beginner tutorial on how a CT log works. Read [the
 //! RFC](https://tools.ietf.org/html/rfc6962) first.
-use reqwest;
 use std::{path, fmt, io};
 use openssl::pkey::PKey;
 
@@ -38,10 +37,10 @@ pub enum Error {
 	/// The CT server provided us with invalid signature.
 	InvalidSignature(String),
 
-	/// The CT server responsed with something other than 200.
+	/// The CT server responded with something other than 200.
 	InvalidResponseStatus(reqwest::StatusCode),
 
-	/// Server responsed with something bad (e.g. malformed JSON)
+	/// Server responded with something bad (e.g. malformed JSON)
 	MalformedResponseBody(String),
 
 	/// Server returned an invalid consistency proof. (prev_size, new_size, desc)
@@ -62,10 +61,10 @@ impl fmt::Display for Error {
 			Error::FileIO(path, e) => write!(f, "{}: {}", path.to_string_lossy(), &e),
 			Error::NetIO(e) => write!(f, "Network IO error: {}", &e),
 			Error::InvalidSignature(desc) => write!(f, "Invalid signature received: {}", &desc),
-			Error::InvalidResponseStatus(response_code) => write!(f, "Server responsed with {} {}", response_code.as_u16(), response_code.as_str()),
+			Error::InvalidResponseStatus(response_code) => write!(f, "Server responded with {} {}", response_code.as_u16(), response_code.as_str()),
 			Error::MalformedResponseBody(desc) => write!(f, "Unable to parse server response: {}", &desc),
 			Error::InvalidConsistencyProof(prev_size, new_size, desc) => write!(f, "Server provided an invalid consistency proof from {} to {}: {}", prev_size, new_size, &desc),
-			Error::CannotVerifyTreeData(desc) => write!(f, "The certificates returned by the server is inconsistent with the perviously provided consistency proof: {}", &desc),
+			Error::CannotVerifyTreeData(desc) => write!(f, "The certificates returned by the server is inconsistent with the previously provided consistency proof: {}", &desc),
 			Error::BadCertificate(desc) => write!(f, "The certificate returned by the server has a problem: {}", &desc),
 		}
 	}
@@ -95,16 +94,26 @@ use internal::new_http_client;
 impl CTClient {
 	/// Construct a new `CTClient` instance, and fetch the latest tree root.
 	///
-	/// Pervious certificates in this log will not be checked. Useful for testing
+	/// Previous certificates in this log will not be checked. Useful for testing
 	/// but could result in missing some important stuff. Not recommended for
-	/// production. See [`new_from_state_file`](crate::CTClient::new_from_state_file).
+	/// production. Use `from_bytes` and `as_bytes` to store state instead.
 	///
 	/// ## Errors
 	///
 	/// * If `base_url` does not ends with `/`.
+	///
+	/// ## Example
+	///
+	/// ```
+	/// use ctclient::CTClient;
+	/// use base64::decode;
+	/// // URL and public key copy-pasted from https://www.gstatic.com/ct/log_list/v2/all_logs_list.json .
+	/// let public_key = decode("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE01EAhx4o0zPQrXTcYjgCt4MVFsT0Pwjzb1RwrM0lhWDlxAYPP6/gyMCXNkOn/7KFsjL7rwk78tHMpY8rXn8AYg==").unwrap();
+	/// let client = CTClient::new_from_latest_th("https://ct.cloudflare.com/logs/nimbus2020/", &public_key).unwrap();
+	/// ```
 	pub fn new_from_latest_th(base_url: &str, pub_key: &[u8]) -> Result<Self, Error> {
-		if !base_url.ends_with("/") {
-			return Err(Error::InvalidArgument(format!("baseUrl must end with /")));
+		if !base_url.ends_with('/') {
+			return Err(Error::InvalidArgument("baseUrl must end with /".to_owned()));
 		}
 		let base_url = reqwest::Url::parse(base_url).map_err(|e| Error::InvalidArgument(format!("Unable to parse url: {}", &e)))?;
 		let http_client = new_http_client()?;
@@ -122,14 +131,27 @@ impl CTClient {
 	/// Construct a new `CTClient` that will check all certificates included after
 	/// the given tree state.
 	///
-	/// Pervious certificates in this log will not be checked, so make sure to check
+	/// Previous certificates in this log before the provided tree hash will not be checked, so make sure to check
 	/// them manually (i.e. with crt.sh). For production,
-	/// [`new_from_state_file`](crate::CTClient::new_from_state_file) is recommended
-	/// to avoid duplicate work (checking those which has already been checked in
-	/// pervious run).
+	/// `from_bytes` and `as_bytes` is recommended
+	/// to avoid duplicate work (e.g. checking those which has already been checked in
+	/// previous run).
+	///
+	/// ## Example
+	///
+	/// ```
+	/// use ctclient::{CTClient, utils};
+	/// use base64::decode;
+	/// // URL and public key copy-pasted from https://www.gstatic.com/ct/log_list/v2/all_logs_list.json .
+	/// let public_key = decode("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE01EAhx4o0zPQrXTcYjgCt4MVFsT0Pwjzb1RwrM0lhWDlxAYPP6/gyMCXNkOn/7KFsjL7rwk78tHMpY8rXn8AYg==").unwrap();
+	/// use std::convert::TryInto;
+	/// // Tree captured on 2020-05-12 15:34:11 UTC
+	/// let th: [u8; 32] = (&utils::hex_to_u8("63875e88a3e37dc5b6cdbe213fe1df490d40193e4777f79467958ee157de70d6")[..]).try_into().unwrap();
+	/// let client = CTClient::new_from_perv_tree_hash("https://ct.cloudflare.com/logs/nimbus2020/", &public_key, th, 299304276).unwrap();
+	/// ```
 	pub fn new_from_perv_tree_hash(base_url: &str, pub_key: &[u8], tree_hash: [u8; 32], tree_size: u64) -> Result<Self, Error> {
-		if !base_url.ends_with("/") {
-			return Err(Error::InvalidArgument(format!("baseUrl must end with /")));
+		if !base_url.ends_with('/') {
+			return Err(Error::InvalidArgument("baseUrl must end with /".to_owned()));
 		}
 		let base_url = reqwest::Url::parse(base_url).map_err(|e| Error::InvalidArgument(format!("Unable to parse url: {}", &e)))?;
 		let http_client = new_http_client()?;
@@ -162,55 +184,61 @@ impl CTClient {
 	pub fn update(&mut self) -> Result<u64, Error> {
 		let mut delaycheck = std::time::Instant::now();
 		let (new_tree_size, new_tree_root) = internal::check_tree_head(&self.http_client, &self.base_url, &self.pub_key)?;
-		if new_tree_size == self.latest_size {
-			if new_tree_root == self.latest_tree_hash {
-				info!("CTClient: {} remained the same.", self.base_url.as_str());
-				return Ok(new_tree_size);
-			} else {
-				return Err(Error::InvalidConsistencyProof(self.latest_size, new_tree_size, format!("Server forked! {} and {} both corrospond to tree_size {}", &utils::u8_to_hex(&self.latest_tree_hash), &utils::u8_to_hex(&new_tree_root), new_tree_size)));
-			}
-		} else if new_tree_size < self.latest_size {
-			// Make sure server isn't doing trick with us.
-			internal::check_consistency_proof(&self.http_client, &self.base_url, new_tree_size, self.latest_size, &new_tree_root, &self.latest_tree_hash)?;
-			warn!("{} rolled back? {} -> {}", self.base_url.as_str(), self.latest_size, new_tree_size);
-			return Ok(self.latest_size)
-		}
-		let consistency_proof_parts = internal::check_consistency_proof(&self.http_client, &self.base_url, self.latest_size, new_tree_size, &self.latest_tree_hash, &new_tree_root)?;
+   	use std::cmp::Ordering;
+		match new_tree_size.cmp(&self.latest_size) {
+			Ordering::Equal => {
+				if new_tree_root == self.latest_tree_hash {
+					info!("CTClient: {} remained the same.", self.base_url.as_str());
+					Ok(new_tree_size)
+				} else {
+					Err(Error::InvalidConsistencyProof(self.latest_size, new_tree_size, format!("Server forked! {} and {} both corrospond to tree_size {}", &utils::u8_to_hex(&self.latest_tree_hash), &utils::u8_to_hex(&new_tree_root), new_tree_size)))
+				}
+			},
+			Ordering::Less => {
+				// Make sure server isn't doing trick with us.
+				internal::check_consistency_proof(&self.http_client, &self.base_url, new_tree_size, self.latest_size, &new_tree_root, &self.latest_tree_hash)?;
+				warn!("{} rolled back? {} -> {}", self.base_url.as_str(), self.latest_size, new_tree_size);
+				Ok(self.latest_size)
+			},
+			Ordering::Greater => {
+				let consistency_proof_parts = internal::check_consistency_proof(&self.http_client, &self.base_url, self.latest_size, new_tree_size, &self.latest_tree_hash, &new_tree_root)?;
 
-		let i_start = self.latest_size;
-		let mut leafs = internal::get_entries(&self.http_client, &self.base_url, i_start..new_tree_size);
-		let mut leaf_hashes: Vec<[u8; 32]> = Vec::new();
-		leaf_hashes.reserve((new_tree_size - i_start) as usize);
-		for i in i_start..new_tree_size {
-			match leafs.next().unwrap() {
-				Ok(leaf) => {
-					leaf_hashes.push(leaf.hash);
-					self.check_leaf(&leaf)?;
-				},
-				Err(e) => {
-					if let Error::MalformedResponseBody(inner_e) = e {
-						return Err(Error::MalformedResponseBody(format!("While parsing leaf #{}: {}", i, &inner_e)));
-					} else {
-						return Err(e);
+				let i_start = self.latest_size;
+				let mut leafs = internal::get_entries(&self.http_client, &self.base_url, i_start..new_tree_size);
+				let mut leaf_hashes: Vec<[u8; 32]> = Vec::new();
+				leaf_hashes.reserve((new_tree_size - i_start) as usize);
+				for i in i_start..new_tree_size {
+					match leafs.next().unwrap() {
+						Ok(leaf) => {
+							leaf_hashes.push(leaf.hash);
+							self.check_leaf(&leaf)?;
+						},
+						Err(e) => {
+							if let Error::MalformedResponseBody(inner_e) = e {
+								return Err(Error::MalformedResponseBody(format!("While parsing leaf #{}: {}", i, &inner_e)));
+							} else {
+								return Err(e);
+							}
+						}
+					}
+					if delaycheck.elapsed() > std::time::Duration::from_secs(1) {
+						info!("Catching up: {} / {}", i, new_tree_size);
+						delaycheck = std::time::Instant::now();
 					}
 				}
-			}
-			if delaycheck.elapsed() > std::time::Duration::from_secs(1) {
-				info!("Catching up: {} / {}", i, new_tree_size);
-				delaycheck = std::time::Instant::now();
-			}
-		}
-		assert_eq!(leaf_hashes.len(), (new_tree_size - i_start) as usize);
-		for proof_part in consistency_proof_parts.into_iter() {
-			assert!(proof_part.subtree.0 >= i_start);
-			assert!(proof_part.subtree.1 <= new_tree_size);
-			proof_part.verify(&leaf_hashes[(proof_part.subtree.0 - i_start) as usize..(proof_part.subtree.1 - i_start) as usize]).map_err(|e| Error::CannotVerifyTreeData(e))?;
-		}
+				assert_eq!(leaf_hashes.len(), (new_tree_size - i_start) as usize);
+				for proof_part in consistency_proof_parts.into_iter() {
+					assert!(proof_part.subtree.0 >= i_start);
+					assert!(proof_part.subtree.1 <= new_tree_size);
+					proof_part.verify(&leaf_hashes[(proof_part.subtree.0 - i_start) as usize..(proof_part.subtree.1 - i_start) as usize]).map_err(Error::CannotVerifyTreeData)?;
+				}
 
-		self.latest_size = new_tree_size;
-		self.latest_tree_hash = new_tree_root;
-		info!("CTClient: {} updated to {} {} (read {} leaves)", self.base_url.as_str(), new_tree_size, &utils::u8_to_hex(&new_tree_root), new_tree_size - i_start);
-		Ok(new_tree_size)
+				self.latest_size = new_tree_size;
+				self.latest_tree_hash = new_tree_root;
+				info!("CTClient: {} updated to {} {} (read {} leaves)", self.base_url.as_str(), new_tree_size, &utils::u8_to_hex(&new_tree_root), new_tree_size - i_start);
+				Ok(new_tree_size)
+			}
+		}
 	}
 
  /// Called by [`Self::update`](crate::CTClient::update) for each leaf received
@@ -226,7 +254,7 @@ impl CTClient {
 		}
 		let chain: Vec<_> = chain.into_iter().map(|x| x.unwrap()).collect();
 		if chain.len() <= 1 {
-			return Err(Error::BadCertificate(format!("Empty certificate chain?")));
+			return Err(Error::BadCertificate("Empty certificate chain?".to_owned()));
 		}
 		let mut is_first = true;
 		for cert in chain {
@@ -241,20 +269,24 @@ impl CTClient {
 				}
 				common_names.push(String::from(AsRef::<str>::as_ref(&cn.unwrap())));
 			}
-			let mut dns_names: Vec<String> = Vec::new();
-			if let Some(san) = cert.subject_alt_names() {
-				for name in san.iter() {
-					if let Some(name) = name.dnsname() {
-						dns_names.push(String::from(name));
-					} else if let Some(uri) = name.uri() {
-						let url_parsed = reqwest::Url::parse(uri).map_err(|_| Error::BadCertificate(format!("This certificate has a URI SNI, but the URI is not parsable.")))?;
-						if let Some(host) = url_parsed.domain() {
-							dns_names.push(String::from(host));
+			if is_first {
+				let mut dns_names: Vec<String> = Vec::new();
+				if let Some(san) = cert.subject_alt_names() {
+					for name in san.iter() {
+						if let Some(name) = name.dnsname() {
+							dns_names.push(String::from(name));
+						} else if let Some(uri) = name.uri() {
+							let url_parsed = reqwest::Url::parse(uri).map_err(|_| Error::BadCertificate("This certificate has a URI SNI, but the URI is not parsable.".to_owned()))?;
+							if let Some(host) = url_parsed.domain() {
+								dns_names.push(String::from(host));
+							}
 						}
 					}
 				}
-			}
-			if is_first {
+        for cn in common_names.iter() {
+					// TODO: determine if cn is a domain name
+					dns_names.push(cn.clone());
+				}
 				trace!("Check leaf: {:?} ({}, etc...)", &leaf, common_names.get(0).unwrap_or(&String::from("(no common name)")));
 			}
 			is_first = false;
@@ -262,6 +294,7 @@ impl CTClient {
 		Ok(())
 	}
 
+	/// Serialize the state of this client into bytes
 	pub fn as_bytes(&self) -> Result<Vec<u8>, Error> {
 		// Scheme: (All integers are in big-endian, fixed array don't specify length)
 		// [Version: u8] [base_url in UTF-8] 0x00 [tree_size: u64] [tree_hash: [u8; 32]] [len of pub_key: u32] [pub_key: [u8]: DER public key for this log] [sha256 of everything seen before: [u8; 32]]
@@ -282,56 +315,59 @@ impl CTClient {
 		Ok(v)
 	}
 
+  /// Parse a byte string returned by [`Self::as_bytes`].
 	pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
 		use std::convert::TryInto;
-		let EINVAL = Err(Error::InvalidArgument(format!("The bytes are invalid.")));
+		fn e_inval() -> Result<CTClient, Error> {
+			Err(Error::InvalidArgument("The bytes are invalid.".to_owned()))
+		}
 		let mut input = bytes;
-		if input.len() < 1 {
-			return EINVAL;
+		if input.is_empty() {
+			return e_inval();
 		}
 		let version = input[0];
 		input = &input[1..];
 		if version != 0 {
-			return Err(Error::InvalidArgument(format!("The bytes are encoded by a ctclient of higher version.")));
+			return Err(Error::InvalidArgument("The bytes are encoded by a ctclient of higher version.".to_owned()));
 		}
 		let base_url_len = match input.iter().position(|x| *x == 0) {
 			Some(k) => k,
-			None => return EINVAL
+			None => return e_inval()
 		};
 		let base_url = std::str::from_utf8(&input[..base_url_len]).map_err(|e| Error::InvalidArgument(format!("Invalid UTF-8 in base_url: {}", &e)))?;
 		input = &input[base_url_len + 1..];
 		if input.len() < 8 {
-			return EINVAL;
+			return e_inval();
 		}
 		let tree_size = u64::from_be_bytes(input[..8].try_into().unwrap());
 		input = &input[8..];
 		if input.len() < 32 {
-			return EINVAL;
+			return e_inval();
 		}
 		let tree_hash: [u8; 32] = input[..32].try_into().unwrap();
 		input = &input[32..];
 		if input.len() < 4 {
-			return EINVAL;
+			return e_inval();
 		}
 		let len_pub_key = u32::from_be_bytes(input[..4].try_into().unwrap());
 		input = &input[4..];
 		if input.len() < len_pub_key as usize {
-			return EINVAL;
+			return e_inval();
 		}
 		let pub_key = &input[..len_pub_key as usize];
 		input = &input[len_pub_key as usize..];
 		if input.len() < 32 {
-			return EINVAL;
+			return e_inval();
 		}
 		let checksum: [u8; 32] = input[..32].try_into().unwrap();
 		input = &input[32..];
-		if input.len() > 0 {
-			return EINVAL;
+		if !input.is_empty() {
+			return e_inval();
 		}
 		let expect_checksum = utils::sha256(&bytes[..bytes.len() - 32]);
 		#[cfg(not(fuzzing))] {
 			if checksum != expect_checksum {
-				return EINVAL;
+				return e_inval();
 			}
 		}
 		let pub_key = openssl::pkey::PKey::<openssl::pkey::Public>::public_key_from_der(pub_key).map_err(|e| Error::InvalidArgument(format!("Can't parse public key: {}", &e)))?;

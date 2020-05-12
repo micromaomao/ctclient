@@ -1,7 +1,6 @@
 use ctclient::CTClient;
-use env_logger;
-use log::error;
-mod utils;
+use log::info;
+use ctclient::utils;
 use std::fs;
 use std::env;
 use std::process::exit;
@@ -26,8 +25,9 @@ fn main () {
 	let mut client;
 	match save_file.read_to_end(&mut save_read) {
 		Ok(size) => {
+			let public_key = base64::decode("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE01EAhx4o0zPQrXTcYjgCt4MVFsT0Pwjzb1RwrM0lhWDlxAYPP6/gyMCXNkOn/7KFsjL7rwk78tHMpY8rXn8AYg==").unwrap();
 			if size == 0 {
-				client = match CTClient::new_from_latest_th("https://ct.googleapis.com/logs/argon2019/", &utils::hex_to_u8("3059301306072a8648ce3d020106082a8648ce3d030107034200042373109be1f35ef6986b6995961078ce49dbb404fc712c5a92606825c04a1aa1b0612d1b8714a9baf00133591d0530e94215e755d72af8b4a2ba45c946918756")) {
+				client = match CTClient::new_from_latest_th("https://ct.cloudflare.com/logs/nimbus2020/", &public_key) {
 					Ok(k) => k,
 					Err(e) => {
 						eprintln!("{}", &e);
@@ -49,6 +49,10 @@ fn main () {
 			exit(1);
 		}
 	}
+	{
+		let th = client.get_checked_tree_head();
+		info!("Current tree head: {} (size = {})", utils::u8_to_hex(&th.1), th.0);
+	}
 	loop {
 		let bytes = client.as_bytes().unwrap();
 		save_file.seek(SeekFrom::Start(0)).unwrap();
@@ -58,6 +62,6 @@ fn main () {
 		if let Err(e) = client.update() {
 			eprintln!("Update error: {}", &e);
 		}
-		std::thread::yield_now();
+		std::thread::sleep(std::time::Duration::from_secs(5));
 	}
 }

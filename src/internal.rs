@@ -1,11 +1,9 @@
 //! Things that are only useful if you are doing your own API calling.
 
-use base64;
-use reqwest;
 use openssl::pkey::PKey;
 use crate::{jsons, utils, Error};
 
-use log::{trace, warn};
+use log::trace;
 
 use std::fmt;
 
@@ -121,12 +119,12 @@ fn verify_dss_test() {
 pub fn get_json<J: serde::de::DeserializeOwned>(client: &reqwest::Client, base_url: &reqwest::Url, path: &str) -> Result<J, Error> {
   let url = base_url.join(path).unwrap();
   let url_str = url.as_str().to_owned();
-	let mut response = client.get(url).send().map_err(|e| Error::NetIO(e))?;
+	let mut response = client.get(url).send().map_err(Error::NetIO)?;
 	if response.status().as_u16() != 200 {
     trace!("GET {} -> {}", &url_str, response.status());
 		return Err(Error::InvalidResponseStatus(response.status()));
 	}
-  let response = response.text().map_err(|e| Error::NetIO(e))?;
+  let response = response.text().map_err(Error::NetIO)?;
   if response.len() > 150 {
     trace!("GET {} -> {:?}...", &url_str, &response[..150]);
   } else {
@@ -274,7 +272,7 @@ pub struct ConsistencyProofPart {
 /// ## TODO
 ///
 /// * Add test
-pub fn verify_consistency_proof(perv_size: u64, next_size: u64, server_provided_proof: &Vec<[u8; 32]>, perv_root: &[u8; 32], next_root: &[u8; 32]) -> Result<Vec<ConsistencyProofPart>, String> {
+pub fn verify_consistency_proof(perv_size: u64, next_size: u64, server_provided_proof: &[[u8; 32]], perv_root: &[u8; 32], next_root: &[u8; 32]) -> Result<Vec<ConsistencyProofPart>, String> {
   use utils::combine_tree_hash;
 
 	if perv_size > next_size {
@@ -341,7 +339,7 @@ pub fn verify_consistency_proof(perv_size: u64, next_size: u64, server_provided_
 	if omit_first {
 		hashes.push(perv_root.clone());
 	}
-	hashes.extend_from_slice(&server_provided_proof[..]);
+	hashes.extend_from_slice(server_provided_proof);
 	assert_eq!(hashes.len(), result_store.len());
 	// now `hashes` and `result_store` match up, we could start to do our hashing,
 	// and try to derive the current root hash.
@@ -542,7 +540,12 @@ fn verify_consistency_proof_new_tree_leaf_hashes_test() {
 /// To do this, calculate the leaf hash of all the new certificates, and call
 /// `ConsistencyProofPart::verify` with the array of leaf hashes. See its
 /// documentation for more info.
+///
+/// ## Panics
+///
+/// ...if prev_size >= next_size
 pub fn check_consistency_proof(client: &reqwest::Client, base_url: &reqwest::Url, perv_size: u64, next_size: u64, perv_root: &[u8; 32], next_root: &[u8; 32]) -> Result<Vec<ConsistencyProofPart>, Error> {
+	assert!(perv_size < next_size);
   let server_consistency_proof: jsons::ConsistencyProof = get_json(client, base_url, &format!("ct/v1/get-sth-consistency?first={}&second={}", perv_size, next_size))?;
   let server_consistency_proof = server_consistency_proof.consistency;
   let mut parsed_server_proof: Vec<[u8; 32]> = Vec::new();
@@ -552,7 +555,7 @@ pub fn check_consistency_proof(client: &reqwest::Client, base_url: &reqwest::Url
     n += 1;
     let decoded = base64::decode(&i).map_err(|e| Error::MalformedResponseBody(format!("Can not base64 decode consistency proof element: {}", &e)))?;
     if decoded.len() != 32 {
-      return Err(Error::MalformedResponseBody(format!("Consistency proof element has length other than 32.")));
+      return Err(Error::MalformedResponseBody("Consistency proof element has length other than 32.".to_owned()));
     }
     parsed_server_proof.push(unsafe {*(&decoded[..] as *const [u8] as *const [u8; 32])});
   }
@@ -611,27 +614,28 @@ impl<'a> Iterator for GetEntriesIter<'a> {
       let try_next_entries = get_json(self.client, self.base_url, &format!("ct/v1/get-entries?start={}&end={}", next_sub_range.start, next_sub_range.end - 1)).map(|x: jsons::GetEntries| x.entries);
       if let Ok(next_entries) = try_next_entries {
         next_sub_range.end = next_sub_range.start + next_entries.len() as u64;
-        if next_entries.len() == 0 {
+        if next_entries.is_empty() {
           self.last_gotten_entries = (next_sub_range, Vec::new());
-          return self.next();
+					// fixme: ???
+          self.next()
         } else {
-          self.last_gotten_entries = (next_sub_range, next_entries.into_iter().map(|x| Some(x)).collect());
+          self.last_gotten_entries = (next_sub_range, next_entries.into_iter().map(Some).collect());
           self.next_index += 1;
           let leaf_entry = self.last_gotten_entries.1[0].take().unwrap();
           match Leaf::try_from(&leaf_entry) {
             Ok(leaf) => {
-              return Some(Ok(leaf));
+              Some(Ok(leaf))
             },
             Err(e) => {
               self.done = true;
-              return Some(Err(e));
+              Some(Err(e))
             }
           }
         }
       } else {
         let err = try_next_entries.unwrap_err();
         self.done = true;
-        return Some(Err(err));
+        Some(Err(err))
       }
     } else {
       assert_eq!(last_gotten_entries.len() as u64, last_gotten_range.end - last_gotten_range.start);
@@ -639,11 +643,11 @@ impl<'a> Iterator for GetEntriesIter<'a> {
       self.next_index += 1;
       match Leaf::try_from(&leaf_entry) {
         Ok(leaf) => {
-          return Some(Ok(leaf));
+          Some(Ok(leaf))
         },
         Err(e) => {
           self.done = true;
-          return Some(Err(e));
+          Some(Err(e))
         }
       }
     }
@@ -655,9 +659,9 @@ impl<'a> Iterator for GetEntriesIter<'a> {
     }
     let rem_size = self.requested_range.end - self.next_index;
     if rem_size >= 1 {
-      return (1, Some(rem_size as usize))
+      (1, Some(rem_size as usize))
     } else {
-      return (0, Some(0))
+      (0, Some(0))
     }
   }
 }
@@ -702,16 +706,20 @@ impl Leaf {
         TimestampedEntry *TimestampedEntry `tls:"selector:LeafType,val:0"`
       }
     */
-    let ERR_INVALID: Result<Self, Error> = Err(Error::MalformedResponseBody(format!("Invalid leaf data.")));
-    let ERR_INVALID_EXTRA: Result<Self, Error> = Err(Error::MalformedResponseBody(format!("Invalid extra data.")));
+    fn err_invalid() -> Result<Leaf, Error> {
+			Err(Error::MalformedResponseBody("Invalid leaf data.".to_owned()))
+		}
+    fn err_invalid_extra() -> Result<Leaf, Error> {
+			Err(Error::MalformedResponseBody("Invalid extra data.".to_owned()))
+		}
     if leaf_input.len() < 2 {
-      return ERR_INVALID;
+      return err_invalid();
     }
     let mut leaf_slice = &leaf_input[..];
     let version = u8::from_be_bytes([leaf_slice[0]]);
     let leaf_type = u8::from_be_bytes([leaf_slice[1]]);
     if version != 0 || leaf_type != 0 {
-      return ERR_INVALID; // TODO should ignore.
+      return err_invalid(); // TODO should ignore.
     }
     leaf_slice = &leaf_slice[2..];
     /*
@@ -725,9 +733,10 @@ impl Leaf {
       }
     */
     if leaf_slice.len() < 8 + 2 {
-      return ERR_INVALID;
+      return err_invalid();
     }
-    let timestamp = u64::from_be_bytes([leaf_slice[0], leaf_slice[1], leaf_slice[2], leaf_slice[3], leaf_slice[4], leaf_slice[5], leaf_slice[6], leaf_slice[7]]);
+		use std::convert::TryInto;
+    let _timestamp = u64::from_be_bytes(leaf_slice[0..8].try_into().unwrap());
     leaf_slice = &leaf_slice[8..];
     let entry_type = u16::from_be_bytes([leaf_slice[0], leaf_slice[1]]);
     leaf_slice = &leaf_slice[2..];
@@ -736,12 +745,12 @@ impl Leaf {
         is_pre_cert = false;
         // len is u24
         if leaf_slice.len() < 3 {
-          return ERR_INVALID;
+          return err_invalid();
         }
         let len = u32::from_be_bytes([0, leaf_slice[0], leaf_slice[1], leaf_slice[2]]);
         leaf_slice = &leaf_slice[3..];
         if leaf_slice.len() < len as usize {
-          return ERR_INVALID;
+          return err_invalid();
         }
         let x509_end = &leaf_slice[..len as usize]; // DER certificate
         leaf_slice = &leaf_slice[len as usize..];
@@ -749,23 +758,23 @@ impl Leaf {
         // Extra data is [][]byte with all length u24.
         let mut extra_slice = &extra_data[..];
         if extra_slice.len() < 3 {
-          return ERR_INVALID_EXTRA;
+          return err_invalid_extra();
         }
         let chain_byte_len = u32::from_be_bytes([0, extra_slice[0], extra_slice[1], extra_slice[2]]);
         extra_slice = &extra_slice[3..];
         if extra_slice.len() != chain_byte_len as usize {
-          return ERR_INVALID_EXTRA;
+          return err_invalid_extra();
         }
         x509_chain = Vec::new();
         x509_chain.push(Vec::from(x509_end));
-        while extra_slice.len() > 0 {
+        while !extra_slice.is_empty() {
           if extra_slice.len() < 3 {
-            return ERR_INVALID_EXTRA;
+            return err_invalid_extra();
           }
           let len = u32::from_be_bytes([0, extra_slice[0], extra_slice[1], extra_slice[2]]);
           extra_slice = &extra_slice[3..];
           if extra_slice.len() < len as usize {
-            return ERR_INVALID_EXTRA;
+            return err_invalid_extra();
           }
           let data = &extra_slice[..len as usize];
           extra_slice = &extra_slice[len as usize..];
@@ -781,18 +790,18 @@ impl Leaf {
         */
         is_pre_cert = true;
         if leaf_slice.len() < 32 {
-          return ERR_INVALID;
+          return err_invalid();
         }
         let _issuer_key_hash = &leaf_slice[0..32];
         leaf_slice = &leaf_slice[32..];
         if leaf_slice.len() < 3 {
-          return ERR_INVALID;
-        }
+					return err_invalid();
+				}
         let len = u32::from_be_bytes([0, leaf_slice[0], leaf_slice[1], leaf_slice[2]]);
         leaf_slice = &leaf_slice[3..];
         if leaf_slice.len() < len as usize {
-          return ERR_INVALID;
-        }
+					return err_invalid();
+				}
         let _x509_end = &leaf_slice[..len as usize]; // This is a "TBS" certificate - no signature and can't be parsed by OpenSSL.
         leaf_slice = &leaf_slice[len as usize..];
 
@@ -805,33 +814,33 @@ impl Leaf {
 
         let mut extra_slice = &extra_data[..];
         if extra_slice.len() < 3 {
-          return ERR_INVALID_EXTRA;
+          return err_invalid_extra();
         }
         let pre_cert_len = u32::from_be_bytes([0, extra_slice[0], extra_slice[1], extra_slice[2]]);
         extra_slice = &extra_slice[3..];
         if extra_slice.len() < pre_cert_len as usize {
-          return ERR_INVALID_EXTRA;
+					return err_invalid_extra();
         }
         let pre_cert_data = &extra_slice[..pre_cert_len as usize];
         extra_slice = &extra_slice[pre_cert_len as usize..];
         x509_chain = Vec::new();
         x509_chain.push(Vec::from(pre_cert_data));
         if extra_slice.len() < 3 {
-          return ERR_INVALID_EXTRA;
+					return err_invalid_extra();
         }
         let rest_len = u32::from_be_bytes([0, extra_slice[0], extra_slice[1], extra_slice[2]]);
         extra_slice = &extra_slice[3..];
         if extra_slice.len() != rest_len as usize {
-          return ERR_INVALID_EXTRA;
+					return err_invalid_extra();
         }
-        while extra_slice.len() > 0 {
+        while !extra_slice.is_empty() {
           if extra_slice.len() < 3 {
-            return ERR_INVALID_EXTRA;
+						return err_invalid_extra();
           }
           let len = u32::from_be_bytes([0, extra_slice[0], extra_slice[1], extra_slice[2]]);
           extra_slice = &extra_slice[3..];
           if extra_slice.len() < len as usize {
-            return ERR_INVALID_EXTRA;
+						return err_invalid_extra();
           }
           let data = &extra_slice[..len as usize];
           extra_slice = &extra_slice[len as usize..];
@@ -839,16 +848,16 @@ impl Leaf {
         }
       },
       _ => {
-        return ERR_INVALID; // TODO should ignore.
+        return err_invalid(); // TODO should ignore.
       }
     }
     if leaf_slice.len() < 2 {
-      return ERR_INVALID;
+      return err_invalid();
     }
     let extension_len = u16::from_be_bytes([leaf_slice[0], leaf_slice[1]]);
     leaf_slice = &leaf_slice[2..];
     if leaf_slice.len() != extension_len as usize {
-      return ERR_INVALID;
+      return err_invalid();
     }
     Ok(Leaf{hash, is_pre_cert, x509_chain})
   }

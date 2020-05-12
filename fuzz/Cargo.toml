@@ -1,4 +1,3 @@
-
 [package]
 name = "ctclient-fuzz"
 version = "0.0.1"
