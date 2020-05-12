@@ -395,3 +395,6 @@ fn as_bytes_test() {
 	bytes[len - 1] ^= 1;
 	CTClient::from_bytes(&bytes).expect_err("");
 }
+
+#[cfg(test)]
+mod long_tests;
