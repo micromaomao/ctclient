@@ -11,18 +11,16 @@ use std::fmt;
 /// functions in this module. You don't necessary need to use this.
 ///
 /// The client constructed will not store cookie or follow redirect.
-pub fn new_http_client() -> Result<reqwest::Client, Error> {
+pub fn new_http_client() -> Result<reqwest::blocking::Client, Error> {
 	use std::time;
 	let mut def_headers = reqwest::header::HeaderMap::new();
 	def_headers.insert("User-Agent", reqwest::header::HeaderValue::from_static("rust-ctclient"));
-	match reqwest::Client::builder()
-		.cookie_store(false)
+	match reqwest::blocking::Client::builder()
 		.connect_timeout(time::Duration::from_secs(5))
 		.tcp_nodelay()
 		.gzip(true)
-		.use_sys_proxy()
 		.default_headers(def_headers)
-		.redirect(reqwest::RedirectPolicy::none())
+		.redirect(reqwest::redirect::Policy::none())
 		.build() {
 			Ok(r) => Ok(r),
 			Err(e) => Err(Error::Unknown(format!("{}", &e)))
@@ -116,10 +114,10 @@ fn verify_dss_test() {
 }
 
 /// Perform a GET request and parse the result as a JSON.
-pub fn get_json<J: serde::de::DeserializeOwned>(client: &reqwest::Client, base_url: &reqwest::Url, path: &str) -> Result<J, Error> {
+pub fn get_json<J: serde::de::DeserializeOwned>(client: &reqwest::blocking::Client, base_url: &reqwest::Url, path: &str) -> Result<J, Error> {
   let url = base_url.join(path).unwrap();
   let url_str = url.as_str().to_owned();
-	let mut response = client.get(url).send().map_err(Error::NetIO)?;
+	let response = client.get(url).send().map_err(Error::NetIO)?;
 	if response.status().as_u16() != 200 {
     trace!("GET {} -> {}", &url_str, response.status());
 		return Err(Error::InvalidResponseStatus(response.status()));
@@ -147,7 +145,7 @@ pub fn get_json<J: serde::de::DeserializeOwned>(client: &reqwest::Client, base_u
 ///
 /// * `client`: A [`reqwest::Client`](reqwest::Client) instance. See
 /// [`CTClient::get_reqwest_client`](crate::CTClient::get_reqwest_client)
-pub fn check_tree_head(client: &reqwest::Client, base_url: &reqwest::Url, pub_key: &PKey<openssl::pkey::Public>) -> Result<(u64, [u8; 32]), Error> {
+pub fn check_tree_head(client: &reqwest::blocking::Client, base_url: &reqwest::Url, pub_key: &PKey<openssl::pkey::Public>) -> Result<(u64, [u8; 32]), Error> {
 	let response: jsons::STH = get_json(client, base_url, "ct/v1/get-sth")?;
 	let mut verify_body: Vec<u8> = Vec::new();
 	/*
@@ -544,7 +542,7 @@ fn verify_consistency_proof_new_tree_leaf_hashes_test() {
 /// ## Panics
 ///
 /// ...if prev_size >= next_size
-pub fn check_consistency_proof(client: &reqwest::Client, base_url: &reqwest::Url, perv_size: u64, next_size: u64, perv_root: &[u8; 32], next_root: &[u8; 32]) -> Result<Vec<ConsistencyProofPart>, Error> {
+pub fn check_consistency_proof(client: &reqwest::blocking::Client, base_url: &reqwest::Url, perv_size: u64, next_size: u64, perv_root: &[u8; 32], next_root: &[u8; 32]) -> Result<Vec<ConsistencyProofPart>, Error> {
 	assert!(perv_size < next_size);
   let server_consistency_proof: jsons::ConsistencyProof = get_json(client, base_url, &format!("ct/v1/get-sth-consistency?first={}&second={}", perv_size, next_size))?;
   let server_consistency_proof = server_consistency_proof.consistency;
@@ -576,12 +574,12 @@ pub struct GetEntriesIter<'a> {
   next_index: u64,
   batch_size: u64,
 
-  client: &'a reqwest::Client,
+  client: &'a reqwest::blocking::Client,
   base_url: &'a reqwest::Url,
 }
 
 impl<'a> GetEntriesIter<'a> {
-  fn new(range: std::ops::Range<u64>, client: &'a reqwest::Client, base_url: &'a reqwest::Url) -> Self {
+  fn new(range: std::ops::Range<u64>, client: &'a reqwest::blocking::Client, base_url: &'a reqwest::Url) -> Self {
     Self{
       last_gotten_entries: (range.start..range.start, Vec::new()),
       next_index: range.start,
@@ -673,7 +671,7 @@ impl<'a> Iterator for GetEntriesIter<'a> {
 /// After the first Err result, the iterator will not produce anything else.
 ///
 /// Uses `O(1)` memory itself.
-pub fn get_entries<'a>(client: &'a reqwest::Client, base_url: &'a reqwest::Url, range: Range<u64>) -> GetEntriesIter<'a> {
+pub fn get_entries<'a>(client: &'a reqwest::blocking::Client, base_url: &'a reqwest::Url, range: Range<u64>) -> GetEntriesIter<'a> {
   GetEntriesIter::new(range, client, base_url)
 }
 

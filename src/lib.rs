@@ -19,10 +19,10 @@ pub mod internal;
 
 use log::{info, warn, trace};
 
-/// Errors that this library could return.
+/// Errors that this library could produce.
 #[derive(Debug)]
 pub enum Error {
-	/// Some odd stuff happened.
+	/// Something strange happened.
 	Unknown(String),
 
 	/// You provided something bad.
@@ -78,7 +78,7 @@ impl fmt::Display for Error {
 pub struct CTClient {
 	base_url: reqwest::Url,
 	pub_key: PKey<openssl::pkey::Public>,
-	http_client: reqwest::Client,
+	http_client: reqwest::blocking::Client,
 	latest_size: u64,
 	latest_tree_hash: [u8; 32],
 }
@@ -171,7 +171,7 @@ impl CTClient {
 	}
 
 	/// Get the underlying http client used to call CT APIs.
-	pub fn get_reqwest_client(&self) -> &reqwest::Client {
+	pub fn get_reqwest_client(&self) -> &reqwest::blocking::Client {
 		&self.http_client
 	}
 

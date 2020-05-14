@@ -3,7 +3,7 @@ name = "ctclient"
 description = "Certificate Transparency Log client for monitoring and gossiping"
 license = "MIT"
 repository = "https://github.com/micromaomao/ctclient"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Mao Wtm <m@maowtm.org>"]
 edition = "2018"
 documentation = "https://docs.rs/ctclient/0.1.0/ctclient/"
@@ -17,11 +17,11 @@ name = "ctclient"
 path = "src/lib.rs"
 
 [dependencies]
-reqwest = { version = "0.9.19" }
+reqwest = { version = "0.10.4", default-features = false, features = ["blocking", "native-tls", "gzip"] }
 serde = { version = "1.0.97", features = ["derive"] }
 serde_json = "1.0.40"
-base64 = "0.10.1"
+base64 = "0.12.1"
 openssl = "0.10.24"
 log = "0.4.7"
 
-env_logger = "0.6.2"
+env_logger = "0.7.1"
