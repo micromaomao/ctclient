@@ -2,9 +2,8 @@
 
 use openssl::pkey::PKey;
 use crate::{jsons, utils, Error};
-
+use std::convert::{TryFrom, TryInto};
 use log::trace;
-
 use std::fmt;
 
 /// Construct a new [reqwest::Client](reqwest::Client) to be used with the
@@ -175,7 +174,7 @@ pub fn check_tree_head(client: &reqwest::blocking::Client, base_url: &reqwest::U
     }
   })?;
   trace!("{} tree head now on {} {}", base_url.as_str(), response.tree_size, &utils::u8_to_hex(&root_hash));
-	Ok((response.tree_size, unsafe { *(&root_hash[..] as *const [u8] as *const [u8; 32]) }))
+	Ok((response.tree_size, root_hash[..].try_into().unwrap()))
 }
 
 /// Function used by
@@ -555,7 +554,7 @@ pub fn check_consistency_proof(client: &reqwest::blocking::Client, base_url: &re
     if decoded.len() != 32 {
       return Err(Error::MalformedResponseBody("Consistency proof element has length other than 32.".to_owned()));
     }
-    parsed_server_proof.push(unsafe {*(&decoded[..] as *const [u8] as *const [u8; 32])});
+    parsed_server_proof.push(decoded[..].try_into().unwrap());
   }
   assert_eq!(parsed_server_proof.len(), n);
   verify_consistency_proof(perv_size, next_size, &parsed_server_proof, perv_root, next_root).map_err(|e| Error::InvalidConsistencyProof(perv_size, next_size, e))
@@ -733,7 +732,6 @@ impl Leaf {
     if leaf_slice.len() < 8 + 2 {
       return err_invalid();
     }
-		use std::convert::TryInto;
     let _timestamp = u64::from_be_bytes(leaf_slice[0..8].try_into().unwrap());
     leaf_slice = &leaf_slice[8..];
     let entry_type = u16::from_be_bytes([leaf_slice[0], leaf_slice[1]]);
@@ -860,8 +858,6 @@ impl Leaf {
     Ok(Leaf{hash, is_pre_cert, x509_chain})
   }
 }
-
-use std::convert::TryFrom;
 
 impl TryFrom<&jsons::LeafEntry> for Leaf {
   type Error = Error;

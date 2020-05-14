@@ -10,6 +10,10 @@
 //!
 //! This project is not a beginner tutorial on how a CT log works. Read [the
 //! RFC](https://tools.ietf.org/html/rfc6962) first.
+
+// we don't need them.
+#![forbid(unsafe_code)]
+
 use std::{path, fmt, io};
 use openssl::pkey::PKey;
 
