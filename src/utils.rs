@@ -73,7 +73,7 @@ pub fn largest_power_of_2_smaller_than(mut n: u64) -> u64 {
 		return 1;
 	}
 	n -= 1;
-	// I'm sure compiler will optimize this suitably.
+	// I'm sure the compiler can optimize this nicely.
 	let mut pow: u64 = 1;
 	loop {
 		n /= 2;
