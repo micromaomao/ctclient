@@ -11,19 +11,19 @@ use std::fmt;
 ///
 /// The client constructed will not store cookie or follow redirect.
 pub fn new_http_client() -> Result<reqwest::blocking::Client, Error> {
-	use std::time;
-	let mut def_headers = reqwest::header::HeaderMap::new();
-	def_headers.insert("User-Agent", reqwest::header::HeaderValue::from_static("rust-ctclient"));
-	match reqwest::blocking::Client::builder()
-		.connect_timeout(time::Duration::from_secs(5))
-		.tcp_nodelay()
-		.gzip(true)
-		.default_headers(def_headers)
-		.redirect(reqwest::redirect::Policy::none())
-		.build() {
-			Ok(r) => Ok(r),
-			Err(e) => Err(Error::Unknown(format!("{}", &e)))
-		}
+  use std::time;
+  let mut def_headers = reqwest::header::HeaderMap::new();
+  def_headers.insert("User-Agent", reqwest::header::HeaderValue::from_static("rust-ctclient"));
+  match reqwest::blocking::Client::builder()
+      .connect_timeout(time::Duration::from_secs(5))
+      .tcp_nodelay()
+      .gzip(true)
+      .default_headers(def_headers)
+      .redirect(reqwest::redirect::Policy::none())
+      .build() {
+    Ok(r) => Ok(r),
+    Err(e) => Err(Error::Unknown(format!("{}", &e)))
+  }
 }
 
 /// Verifies a TLS digitally-signed struct (see [the TLS
@@ -45,85 +45,85 @@ pub fn new_http_client() -> Result<reqwest::blocking::Client, Error> {
 ///
 /// * `data`: the stuff to verify against. Server should have signed this.
 pub fn verify_dss(dss: &[u8], pub_key: &PKey<openssl::pkey::Public>, data: &[u8]) -> Result<(), Error> {
-	// rustls crate contain code that parses this structure:
-	// 	https://docs.rs/rustls/0.15.2/src/rustls/msgs/handshake.rs.html#1546
-	// It shows that the struct begins with two bytes denoting the signature scheme, and
-	// then follows a 2-byte length of the rest of the struct.
+  // rustls crate contain code that parses this structure:
+  // 	https://docs.rs/rustls/0.15.2/src/rustls/msgs/handshake.rs.html#1546
+  // It shows that the struct begins with two bytes denoting the signature scheme, and
+  // then follows a 2-byte length of the rest of the struct.
 
   if dss.len() > (1usize << 16usize) + 3 {
     return Err(Error::InvalidSignature(format!("dss too long. (len = {})", dss.len())));
   }
 
-	if dss.len() < 4 {
-		return Err(Error::InvalidSignature(format!("Invalid dss: {}\n  Too short. Expected at least 4 bytes.", &utils::u8_to_hex(dss))));
-	}
-	let sig_type = u16::from_be_bytes([dss[0], dss[1]]);
-	let length = u16::from_be_bytes([dss[2], dss[3]]);
-	let rest = &dss[4..];
-	if rest.len() != length as usize {
-		return Err(Error::InvalidSignature(format!("Invalid dss: {}\n  It says there that there are {} bytes in the signature part, but I see {}.", &utils::u8_to_hex(dss), length, rest.len())));
-	}
+  if dss.len() < 4 {
+    return Err(Error::InvalidSignature(format!("Invalid dss: {}\n  Too short. Expected at least 4 bytes.", &utils::u8_to_hex(dss))));
+  }
+  let sig_type = u16::from_be_bytes([dss[0], dss[1]]);
+  let length = u16::from_be_bytes([dss[2], dss[3]]);
+  let rest = &dss[4..];
+  if rest.len() != length as usize {
+    return Err(Error::InvalidSignature(format!("Invalid dss: {}\n  It says there that there are {} bytes in the signature part, but I see {}.", &utils::u8_to_hex(dss), length, rest.len())));
+  }
 
-	// https://docs.rs/rustls/0.15.2/src/rustls/msgs/enums.rs.html#720
+  // https://docs.rs/rustls/0.15.2/src/rustls/msgs/enums.rs.html#720
   // We only need to handle these two cases because RFC says so.
-	const SIGSCHEME_ECDSA_NISTP256_SHA256: u16 = 0x0403;
-	const SIGSCHEME_RSA_PKCS1_SHA256: u16 = 0x0401;
-	match sig_type {
-		SIGSCHEME_ECDSA_NISTP256_SHA256 => {
-			if pub_key.id() != openssl::pkey::Id::EC {
-				return Err(Error::InvalidSignature(format!("dss says signature is EC, but key is {:?}", pub_key.id())));
-			}
-		}
-		SIGSCHEME_RSA_PKCS1_SHA256 => {
-			if pub_key.id() != openssl::pkey::Id::RSA {
-				return Err(Error::InvalidSignature(format!("dss says signature is RSA, but key is {:?}", pub_key.id())));
-			}
-		}
-		_ => {
-			return Err(Error::InvalidSignature(format!("Unknow signature scheme {:2x}", sig_type)));
-		}
-	}
+  const SIGSCHEME_ECDSA_NISTP256_SHA256: u16 = 0x0403;
+  const SIGSCHEME_RSA_PKCS1_SHA256: u16 = 0x0401;
+  match sig_type {
+    SIGSCHEME_ECDSA_NISTP256_SHA256 => {
+      if pub_key.id() != openssl::pkey::Id::EC {
+        return Err(Error::InvalidSignature(format!("dss says signature is EC, but key is {:?}", pub_key.id())));
+      }
+    }
+    SIGSCHEME_RSA_PKCS1_SHA256 => {
+      if pub_key.id() != openssl::pkey::Id::RSA {
+        return Err(Error::InvalidSignature(format!("dss says signature is RSA, but key is {:?}", pub_key.id())));
+      }
+    }
+    _ => {
+      return Err(Error::InvalidSignature(format!("Unknow signature scheme {:2x}", sig_type)));
+    }
+  }
 
-	let mut verifier = openssl::sign::Verifier::new(openssl::hash::MessageDigest::sha256(), pub_key).map_err(|e| Error::Unknown(format!("EVP_DigestVerifyInit: {}", &e)))?;
-	if sig_type == SIGSCHEME_RSA_PKCS1_SHA256 {
-		verifier.set_rsa_padding(openssl::rsa::Padding::PKCS1).map_err(|e| Error::Unknown(format!("EVP_PKEY_CTX_set_rsa_padding: {}", &e)))?;
-	}
-	verifier.update(data).map_err(|e| Error::Unknown(format!("EVP_DigestUpdate: {}", &e)))?;
-	if !verifier.verify(rest).map_err(|e| Error::InvalidSignature(format!("EVP_DigestVerifyFinal: {}", &e)))? {
-		return Err(Error::InvalidSignature(format!("Signature is invalid: signature = {}, data = {}.", &utils::u8_to_hex(rest), &utils::u8_to_hex(data))));
-	}
+  let mut verifier = openssl::sign::Verifier::new(openssl::hash::MessageDigest::sha256(), pub_key).map_err(|e| Error::Unknown(format!("EVP_DigestVerifyInit: {}", &e)))?;
+  if sig_type == SIGSCHEME_RSA_PKCS1_SHA256 {
+    verifier.set_rsa_padding(openssl::rsa::Padding::PKCS1).map_err(|e| Error::Unknown(format!("EVP_PKEY_CTX_set_rsa_padding: {}", &e)))?;
+  }
+  verifier.update(data).map_err(|e| Error::Unknown(format!("EVP_DigestUpdate: {}", &e)))?;
+  if !verifier.verify(rest).map_err(|e| Error::InvalidSignature(format!("EVP_DigestVerifyFinal: {}", &e)))? {
+    return Err(Error::InvalidSignature(format!("Signature is invalid: signature = {}, data = {}.", &utils::u8_to_hex(rest), &utils::u8_to_hex(data))));
+  }
 
   trace!("Signature checked for data {} - signature is {}", &utils::u8_to_hex(data), &utils::u8_to_hex(dss));
 
-	Ok(())
+  Ok(())
 }
 
 #[test]
 fn verify_dss_test() {
-	let key = PKey::public_key_from_der(&utils::hex_to_u8("3056301006072a8648ce3d020106052b8104000a0342000412c022d1b5cab048f419d46f111743cea4fcd54a05228d14cecd9cc1d120e4cc3e22e8481e5ccc3db16273a8d981ac144306d644a4227468fccd6580563ec8bd")[..]).unwrap();
-	verify_dss(&utils::hex_to_u8("040300473045022100ba6da0fb4d4440965dd1d096212da95880320113320ddc5202a0b280ac518349022005bb17637d4ed06facb4af5b4b9b9083210474998ac33809a6e10c9352032055"), &key, b"hello").unwrap();
-	verify_dss(&utils::hex_to_u8("0403004830460221009857dc5e2bcc0b67059a5bde9ead6a36614ab315423c0b2e4762ba7aca3f0181022100eab3af33367cb89d556c17c1ce7de1c2b8c2b80d709d0c3cbb45c8acc6809d1d"), &key, b"not hello").unwrap();
-	verify_dss(&utils::hex_to_u8("0403004830460221009857dc5e2bcc0b67059a5bde9ead6a36614ab315423c0b2e4762ba7aca3f0181022100eab3af33367cb89d556c17c1ce7de1c2b8c2b80d709d0c3cbb45c8acc6809d1d"), &key, b"hello").expect_err("");
+  let key = PKey::public_key_from_der(&utils::hex_to_u8("3056301006072a8648ce3d020106052b8104000a0342000412c022d1b5cab048f419d46f111743cea4fcd54a05228d14cecd9cc1d120e4cc3e22e8481e5ccc3db16273a8d981ac144306d644a4227468fccd6580563ec8bd")[..]).unwrap();
+  verify_dss(&utils::hex_to_u8("040300473045022100ba6da0fb4d4440965dd1d096212da95880320113320ddc5202a0b280ac518349022005bb17637d4ed06facb4af5b4b9b9083210474998ac33809a6e10c9352032055"), &key, b"hello").unwrap();
+  verify_dss(&utils::hex_to_u8("0403004830460221009857dc5e2bcc0b67059a5bde9ead6a36614ab315423c0b2e4762ba7aca3f0181022100eab3af33367cb89d556c17c1ce7de1c2b8c2b80d709d0c3cbb45c8acc6809d1d"), &key, b"not hello").unwrap();
+  verify_dss(&utils::hex_to_u8("0403004830460221009857dc5e2bcc0b67059a5bde9ead6a36614ab315423c0b2e4762ba7aca3f0181022100eab3af33367cb89d556c17c1ce7de1c2b8c2b80d709d0c3cbb45c8acc6809d1d"), &key, b"hello").expect_err("");
 
-	// Don't panic.
-	verify_dss(&utils::hex_to_u8(""), &key, b"hello").expect_err("");
-	verify_dss(&utils::hex_to_u8("00"), &key, b"hello").expect_err("");
-	verify_dss(&utils::hex_to_u8("0001"), &key, b"hello").expect_err("");
-	verify_dss(&utils::hex_to_u8("000102"), &key, b"hello").expect_err("");
-	verify_dss(&utils::hex_to_u8("00010203"), &key, b"hello").expect_err("");
-	verify_dss(&utils::hex_to_u8("0001020304"), &key, b"hello").expect_err("");
-	verify_dss(&utils::hex_to_u8("000102030405"), &key, b"hello").expect_err("");
+  // Don't panic.
+  verify_dss(&utils::hex_to_u8(""), &key, b"hello").expect_err("");
+  verify_dss(&utils::hex_to_u8("00"), &key, b"hello").expect_err("");
+  verify_dss(&utils::hex_to_u8("0001"), &key, b"hello").expect_err("");
+  verify_dss(&utils::hex_to_u8("000102"), &key, b"hello").expect_err("");
+  verify_dss(&utils::hex_to_u8("00010203"), &key, b"hello").expect_err("");
+  verify_dss(&utils::hex_to_u8("0001020304"), &key, b"hello").expect_err("");
+  verify_dss(&utils::hex_to_u8("000102030405"), &key, b"hello").expect_err("");
 }
 
 /// Perform a GET request and parse the result as a JSON.
 pub fn get_json<J: serde::de::DeserializeOwned>(client: &reqwest::blocking::Client, base_url: &reqwest::Url, path: &str) -> Result<J, Error> {
   let url = base_url.join(path).unwrap();
   let url_str = url.as_str().to_owned();
-	let response = client.get(url).send().map_err(Error::NetIO)?;
-	if response.status().as_u16() != 200 {
+  let response = client.get(url).send().map_err(Error::NetIO)?;
+  if response.status().as_u16() != 200 {
     trace!("GET {} -> {}", &url_str, response.status());
-		return Err(Error::InvalidResponseStatus(response.status()));
-	}
+    return Err(Error::InvalidResponseStatus(response.status()));
+  }
   let response = response.text().map_err(Error::NetIO)?;
   if response.len() > 150 {
     trace!("GET {} -> {:?}...", &url_str, &response[..150]);
@@ -148,36 +148,36 @@ pub fn get_json<J: serde::de::DeserializeOwned>(client: &reqwest::blocking::Clie
 /// * `client`: A [`reqwest::Client`](reqwest::Client) instance. See
 /// [`CTClient::get_reqwest_client`](crate::CTClient::get_reqwest_client)
 pub fn check_tree_head(client: &reqwest::blocking::Client, base_url: &reqwest::Url, pub_key: &PKey<openssl::pkey::Public>) -> Result<(u64, [u8; 32]), Error> {
-	let response: jsons::STH = get_json(client, base_url, "ct/v1/get-sth")?;
-	let mut verify_body: Vec<u8> = Vec::new();
-	/*
-		From go source:
-		type TreeHeadSignature struct {
-			Version        Version       `tls:"maxval:255"`
-			SignatureType  SignatureType `tls:"maxval:255"` // == TreeHashSignatureType
-			Timestamp      uint64
-			TreeSize       uint64
-			SHA256RootHash SHA256Hash
-		}
-	*/
-	verify_body.push(0); // Version = 0
-	verify_body.push(1); // SignatureType = TreeHashSignatureType
-	verify_body.extend_from_slice(&response.timestamp.to_be_bytes()); // Timestamp
-	verify_body.extend_from_slice(&response.tree_size.to_be_bytes()); // TreeSize
-	let root_hash = base64::decode(&response.sha256_root_hash).map_err(|e| Error::MalformedResponseBody(format!("base64 decode failure on root sha256: {} (trying to decode {:?})", &e, &response.sha256_root_hash)))?;
-	if root_hash.len() != 32 {
-		return Err(Error::MalformedResponseBody(format!("Invalid server response: sha256_root_hash should have length of 32. Server response is {:?}", &response)));
-	}
-	verify_body.extend_from_slice(&root_hash[..]);
-	let dss = base64::decode(&response.tree_head_signature).map_err(|e| Error::MalformedResponseBody(format!("base64 decode failure on signature: {} (trying to decode {:?})", &e, &response.tree_head_signature)))?;
-	verify_dss(&dss[..], pub_key, &verify_body[..]).map_err(|e| {
+  let response: jsons::STH = get_json(client, base_url, "ct/v1/get-sth")?;
+  let mut verify_body: Vec<u8> = Vec::new();
+  /*
+    From go source:
+    type TreeHeadSignature struct {
+      Version        Version       `tls:"maxval:255"`
+      SignatureType  SignatureType `tls:"maxval:255"` // == TreeHashSignatureType
+      Timestamp      uint64
+      TreeSize       uint64
+      SHA256RootHash SHA256Hash
+    }
+  */
+  verify_body.push(0); // Version = 0
+  verify_body.push(1); // SignatureType = TreeHashSignatureType
+  verify_body.extend_from_slice(&response.timestamp.to_be_bytes()); // Timestamp
+  verify_body.extend_from_slice(&response.tree_size.to_be_bytes()); // TreeSize
+  let root_hash = base64::decode(&response.sha256_root_hash).map_err(|e| Error::MalformedResponseBody(format!("base64 decode failure on root sha256: {} (trying to decode {:?})", &e, &response.sha256_root_hash)))?;
+  if root_hash.len() != 32 {
+    return Err(Error::MalformedResponseBody(format!("Invalid server response: sha256_root_hash should have length of 32. Server response is {:?}", &response)));
+  }
+  verify_body.extend_from_slice(&root_hash[..]);
+  let dss = base64::decode(&response.tree_head_signature).map_err(|e| Error::MalformedResponseBody(format!("base64 decode failure on signature: {} (trying to decode {:?})", &e, &response.tree_head_signature)))?;
+  verify_dss(&dss[..], pub_key, &verify_body[..]).map_err(|e| {
     match e {
       Error::InvalidSignature(desc) => Error::InvalidSignature(format!("When checking STH signature: {}", &desc)),
       other => other
     }
   })?;
   trace!("{} tree head now on {} {}", base_url.as_str(), response.tree_size, &utils::u8_to_hex(&root_hash));
-	Ok((response.tree_size, root_hash[..].try_into().unwrap()))
+  Ok((response.tree_size, root_hash[..].try_into().unwrap()))
 }
 
 /// Function used by
@@ -195,27 +195,27 @@ pub fn check_tree_head(client: &reqwest::blocking::Client, base_url: &reqwest::U
 /// contained within (0, from_size) (i.e. already known).
 pub fn consistency_proof_partial(from_size: u64, to_size: u64) -> Vec<(u64, u64)> {
   fn inner(result_store: &mut Vec<(u64, u64)>, subtree: (u64, u64), from_size: u64) {
-		use utils::largest_power_of_2_smaller_than;
-		assert!(subtree.0 < subtree.1);
-		assert!(from_size <= subtree.1);
-		if from_size == subtree.1 {
-			result_store.push(subtree);
-			return;
-		}
-		let subtree_size = subtree.1 - subtree.0;
-		let start_of_right_branch = largest_power_of_2_smaller_than(subtree_size);
-		if from_size - subtree.0 <= start_of_right_branch { // go left
-			result_store.push((subtree.0 + start_of_right_branch, subtree.1));
-			inner(result_store, (subtree.0, subtree.0 + start_of_right_branch), from_size);
-		} else { // go right
-			result_store.push((subtree.0, subtree.0 + start_of_right_branch));
-			inner(result_store, (subtree.0 + start_of_right_branch, subtree.1), from_size);
-		}
-	}
-	let mut result_store = Vec::new();
-	inner(&mut result_store, (0, to_size), from_size);
-	result_store.reverse();
-	result_store
+    use utils::largest_power_of_2_smaller_than;
+    assert!(subtree.0 < subtree.1);
+    assert!(from_size <= subtree.1);
+    if from_size == subtree.1 {
+      result_store.push(subtree);
+      return;
+    }
+    let subtree_size = subtree.1 - subtree.0;
+    let start_of_right_branch = largest_power_of_2_smaller_than(subtree_size);
+    if from_size - subtree.0 <= start_of_right_branch { // go left
+      result_store.push((subtree.0 + start_of_right_branch, subtree.1));
+      inner(result_store, (subtree.0, subtree.0 + start_of_right_branch), from_size);
+    } else { // go right
+      result_store.push((subtree.0, subtree.0 + start_of_right_branch));
+      inner(result_store, (subtree.0 + start_of_right_branch, subtree.1), from_size);
+    }
+  }
+  let mut result_store = Vec::new();
+  inner(&mut result_store, (0, to_size), from_size);
+  result_store.reverse();
+  result_store
 }
 
 #[test]
@@ -226,17 +226,17 @@ fn consistency_proof_partial_test() {
   assert_eq!(consistency_proof_partial(6, 7), vec![(4, 6), (6, 7), (0, 4)]);
 
   assert_eq!(consistency_proof_partial(753913835, 753913848).len(), 25);
-	assert_eq!(consistency_proof_partial(6, 6), vec![(0, 6)]);
-	assert_eq!(consistency_proof_partial(7, 7), vec![(0, 7)]);
+  assert_eq!(consistency_proof_partial(6, 6), vec![(0, 6)]);
+  assert_eq!(consistency_proof_partial(7, 7), vec![(0, 7)]);
 }
 
 /// A subtree hash provided by the server in a consistency proof.
 pub struct ConsistencyProofPart {
-	/// (start, non-inclusive end)
-	pub subtree: (u64, u64),
+  /// (start, non-inclusive end)
+  pub subtree: (u64, u64),
 
-	/// The hash of this subtree as from the proof
-	pub server_hash: [u8; 32],
+  /// The hash of this subtree as from the proof
+  pub server_hash: [u8; 32],
 }
 
 /// Verify that the consistency proof given by `server_provided_proof` gets us
@@ -272,244 +272,244 @@ pub struct ConsistencyProofPart {
 pub fn verify_consistency_proof(perv_size: u64, next_size: u64, server_provided_proof: &[[u8; 32]], perv_root: &[u8; 32], next_root: &[u8; 32]) -> Result<Vec<ConsistencyProofPart>, String> {
   use utils::combine_tree_hash;
 
-	if perv_size > next_size {
-		panic!("perv_size must be <= next_size");
-	}
-	if perv_size == next_size {
-		return Ok(Vec::new());
-	}
-	if perv_size == 0 {
-		// An empty tree is a subtree of every tree. No need to prove.
-		return Ok(vec![ConsistencyProofPart{
-			subtree: (0, next_size),
-			server_hash: *next_root
-		}]);
-	}
+  if perv_size > next_size {
+    panic!("perv_size must be <= next_size");
+  }
+  if perv_size == next_size {
+    return Ok(Vec::new());
+  }
+  if perv_size == 0 {
+    // An empty tree is a subtree of every tree. No need to prove.
+    return Ok(vec![ConsistencyProofPart{
+      subtree: (0, next_size),
+      server_hash: *next_root
+    }]);
+  }
 
-	// A consistency proof is an array of hashes of some subtrees of the current
-	// tree. These subtrees will entirely cover the previous tree, and will also
-	// include some new parts which is only in the current tree. To validate the
-	// proof, we attempt to derive the new root hash based on these provided
-	// hashes. If we got the same hash as the server signed tree hash, we know that
-	// the previous tree is entirely contained in the new tree. In addition, we
-	// also need to check that the hashes which corresponds to subtrees that
-	// contains previous nodes are genuine. We do this by attempting to construct
-	// the previous root hash based on these hashes, and see if we came up with a
-	// hash that is the same as the `perv_root` provided by the caller.
+  // A consistency proof is an array of hashes of some subtrees of the current
+  // tree. These subtrees will entirely cover the previous tree, and will also
+  // include some new parts which is only in the current tree. To validate the
+  // proof, we attempt to derive the new root hash based on these provided
+  // hashes. If we got the same hash as the server signed tree hash, we know that
+  // the previous tree is entirely contained in the new tree. In addition, we
+  // also need to check that the hashes which corresponds to subtrees that
+  // contains previous nodes are genuine. We do this by attempting to construct
+  // the previous root hash based on these hashes, and see if we came up with a
+  // hash that is the same as the `perv_root` provided by the caller.
 
-	// A subtree is represented with (u64, u64), where the first number is the
-	// starting index, and the second number is the non-inclusive ending index. For
-	// example, (2, 4) denote the 2-level subtree made by the nodes with index 2
-	// and 3, which looks like this:
-	//
-	//      23
-	//     /  \
-	//    2    3
+  // A subtree is represented with (u64, u64), where the first number is the
+  // starting index, and the second number is the non-inclusive ending index. For
+  // example, (2, 4) denote the 2-level subtree made by the nodes with index 2
+  // and 3, which looks like this:
+  //
+  //      23
+  //     /  \
+  //    2    3
 
-	// Calculate the proof ourselves first so that we know how to use the server
-	// provided proof.
-	let calculated_proof = consistency_proof_partial(perv_size, next_size);
+  // Calculate the proof ourselves first so that we know how to use the server
+  // provided proof.
+  let calculated_proof = consistency_proof_partial(perv_size, next_size);
 
-	// The server will omit the first hash if it will otherwise simply be the
-	// previous root hash. This happens when previous tree is a complete balanced
-	// tree, sitting in the bottom-left corner of the current tree. Since these
-	// trees always start at 0, we only need to check if the size is a power of 2
-	// (hence a balanced tree)
-	let omit_first = u64::is_power_of_two(perv_size);
+  // The server will omit the first hash if it will otherwise simply be the
+  // previous root hash. This happens when previous tree is a complete balanced
+  // tree, sitting in the bottom-left corner of the current tree. Since these
+  // trees always start at 0, we only need to check if the size is a power of 2
+  // (hence a balanced tree)
+  let omit_first = u64::is_power_of_two(perv_size);
 
-	let mut expected_proof_len = calculated_proof.len();
-	if omit_first {
-		expected_proof_len -= 1;
-	}
-	if server_provided_proof.len() != expected_proof_len {
-		return Err(format!("wrong proof length: expected {}, got {}", expected_proof_len, server_provided_proof.len()));
-	}
+  let mut expected_proof_len = calculated_proof.len();
+  if omit_first {
+    expected_proof_len -= 1;
+  }
+  if server_provided_proof.len() != expected_proof_len {
+    return Err(format!("wrong proof length: expected {}, got {}", expected_proof_len, server_provided_proof.len()));
+  }
 
-	let mut hashes = Vec::new();
-	hashes.reserve(calculated_proof.len());
-	if omit_first {
-		hashes.push(perv_root.clone());
-	}
-	hashes.extend_from_slice(server_provided_proof);
-	assert_eq!(hashes.len(), calculated_proof.len());
+  let mut hashes = Vec::new();
+  hashes.reserve(calculated_proof.len());
+  if omit_first {
+    hashes.push(perv_root.clone());
+  }
+  hashes.extend_from_slice(server_provided_proof);
+  assert_eq!(hashes.len(), calculated_proof.len());
 
-	// Now each element of `hashes` and `calculated_proof` match up
-	// (hash[i] is the hash of the subtree calculated_proof[i]), we could start to
-	// do our hashing, and try to derive the new root hash.
+  // Now each element of `hashes` and `calculated_proof` match up
+  // (hash[i] is the hash of the subtree calculated_proof[i]), we could start to
+  // do our hashing, and try to derive the new root hash.
 
-	let mut derived_new_hash = hashes[0];
-	let mut derived_new_hash_subtree = calculated_proof[0];
-	for (subtree, hash) in (1..hashes.len()).map(|i| (calculated_proof[i], &hashes[i])) {
+  let mut derived_new_hash = hashes[0];
+  let mut derived_new_hash_subtree = calculated_proof[0];
+  for (subtree, hash) in (1..hashes.len()).map(|i| (calculated_proof[i], &hashes[i])) {
     // Proof can't have overlapping subtrees
-		assert_ne!(derived_new_hash_subtree.0, subtree.0);
+    assert_ne!(derived_new_hash_subtree.0, subtree.0);
     // Two possibilities: either the current proof part represent a subtree which
-		// exists in the previous tree, or it represents an entirely new subtree. Proof entries
-		// can't represent overlapping trees/trees that cover both old and new nodes (otherwise there is
-		// no way to derive the hash of the old tree because the hashes to some part of the old tree is "mixed" together
-		// with some part of the new tree).
-		//
-		// In the first case, it will always be the "left" branch, and in the second case, "right" branch.
-		//
-		// We need to combine the hashes in the right order:
-		//  Left branch (previous branch) first, then right branch (new branch).
-		if subtree.0 > derived_new_hash_subtree.0 {
+    // exists in the previous tree, or it represents an entirely new subtree. Proof entries
+    // can't represent overlapping trees/trees that cover both old and new nodes (otherwise there is
+    // no way to derive the hash of the old tree because the hashes to some part of the old tree is "mixed" together
+    // with some part of the new tree).
+    //
+    // In the first case, it will always be the "left" branch, and in the second case, "right" branch.
+    //
+    // We need to combine the hashes in the right order:
+    //  Left branch (previous branch) first, then right branch (new branch).
+    if subtree.0 > derived_new_hash_subtree.0 {
       // Right branch
-			assert_eq!(subtree.0, derived_new_hash_subtree.1);
-			derived_new_hash = combine_tree_hash(&derived_new_hash, hash);
-			derived_new_hash_subtree = (derived_new_hash_subtree.0, subtree.1);
-		} else {
-			// Left branch
-			assert_eq!(subtree.1, derived_new_hash_subtree.0);
-			derived_new_hash = combine_tree_hash(hash, &derived_new_hash);
-			derived_new_hash_subtree = (subtree.0, derived_new_hash_subtree.1);
-		}
-	}
+      assert_eq!(subtree.0, derived_new_hash_subtree.1);
+      derived_new_hash = combine_tree_hash(&derived_new_hash, hash);
+      derived_new_hash_subtree = (derived_new_hash_subtree.0, subtree.1);
+    } else {
+      // Left branch
+      assert_eq!(subtree.1, derived_new_hash_subtree.0);
+      derived_new_hash = combine_tree_hash(hash, &derived_new_hash);
+      derived_new_hash_subtree = (subtree.0, derived_new_hash_subtree.1);
+    }
+  }
   if derived_new_hash != *next_root {
-		return Err(format!("calculated tree root {} does not match given tree root {}", utils::u8_to_hex(&derived_new_hash), utils::u8_to_hex(next_root)));
-	}
+    return Err(format!("calculated tree root {} does not match given tree root {}", utils::u8_to_hex(&derived_new_hash), utils::u8_to_hex(next_root)));
+  }
 
   // Now make sure we can derive the hash of the previous tree from this proof.
-	if omit_first {
-		// we are sure that last tree is included in the new tree, because we used last tree's hash to calculate the new hash.
-		trace!("consistency checked from {} to {}; previous tree is complete.", &utils::u8_to_hex(perv_root), &utils::u8_to_hex(next_root));
-		Ok(hashes.iter().zip(calculated_proof.iter()).skip(1).map(|(hash, subtree)| ConsistencyProofPart{subtree: *subtree, server_hash: *hash}).collect())
-	} else {
+  if omit_first {
+    // we are sure that last tree is included in the new tree, because we used last tree's hash to calculate the new hash.
+    trace!("consistency checked from {} to {}; previous tree is complete.", &utils::u8_to_hex(perv_root), &utils::u8_to_hex(next_root));
+    Ok(hashes.iter().zip(calculated_proof.iter()).skip(1).map(|(hash, subtree)| ConsistencyProofPart{subtree: *subtree, server_hash: *hash}).collect())
+  } else {
     // First component of proof is always a part of the previous tree.
-		assert!(calculated_proof[0].1 <= perv_size);
-		let mut derived_old_hash: [u8; 32] = hashes[0];
-		let mut derived_old_hash_subtree: (u64, u64) = calculated_proof[0];
-		let mut new_parts = Vec::new();
-		for (subtree, hash) in (1..hashes.len()).map(|i| (calculated_proof[i], &hashes[i])) {
-			if subtree.1 <= perv_size { // if next_subtree is part of the previous tree...
-				if subtree.0 > derived_old_hash_subtree.0 {
-					assert_eq!(subtree.0, derived_old_hash_subtree.1);
-					derived_old_hash = combine_tree_hash(&derived_old_hash, hash);
-					derived_old_hash_subtree = (derived_old_hash_subtree.0, subtree.1);
-				} else {
-					assert_eq!(subtree.1, derived_old_hash_subtree.0);
-					derived_old_hash = combine_tree_hash(hash, &derived_old_hash);
-					derived_old_hash_subtree = (subtree.0, derived_old_hash_subtree.1);
-				}
-			} else {
+    assert!(calculated_proof[0].1 <= perv_size);
+    let mut derived_old_hash: [u8; 32] = hashes[0];
+    let mut derived_old_hash_subtree: (u64, u64) = calculated_proof[0];
+    let mut new_parts = Vec::new();
+    for (subtree, hash) in (1..hashes.len()).map(|i| (calculated_proof[i], &hashes[i])) {
+      if subtree.1 <= perv_size { // if next_subtree is part of the previous tree...
+        if subtree.0 > derived_old_hash_subtree.0 {
+          assert_eq!(subtree.0, derived_old_hash_subtree.1);
+          derived_old_hash = combine_tree_hash(&derived_old_hash, hash);
+          derived_old_hash_subtree = (derived_old_hash_subtree.0, subtree.1);
+        } else {
+          assert_eq!(subtree.1, derived_old_hash_subtree.0);
+          derived_old_hash = combine_tree_hash(hash, &derived_old_hash);
+          derived_old_hash_subtree = (subtree.0, derived_old_hash_subtree.1);
+        }
+      } else {
         // Proof entries is either entirely new tree or entirely old tree.
-				assert!(subtree.0 >= perv_size);
-				new_parts.push(ConsistencyProofPart{
-					subtree,
-					server_hash: *hash,
-				});
-			}
-		}
-		if derived_old_hash != *perv_root {
-			return Err(format!("calculated perv_root {} does not match given perv_root {}", utils::u8_to_hex(&derived_old_hash), utils::u8_to_hex(perv_root)));
-		}
+        assert!(subtree.0 >= perv_size);
+        new_parts.push(ConsistencyProofPart{
+          subtree,
+          server_hash: *hash,
+        });
+      }
+    }
+    if derived_old_hash != *perv_root {
+      return Err(format!("calculated perv_root {} does not match given perv_root {}", utils::u8_to_hex(&derived_old_hash), utils::u8_to_hex(perv_root)));
+    }
 
-		trace!("consistency checked from {} to {}", &utils::u8_to_hex(perv_root), &utils::u8_to_hex(next_root));
-		Ok(new_parts)
-	}
+    trace!("consistency checked from {} to {}", &utils::u8_to_hex(perv_root), &utils::u8_to_hex(next_root));
+    Ok(new_parts)
+  }
 }
 
 impl ConsistencyProofPart {
-	/// Verify that an array of leaf_hashes could reconstruct this subtree's
-	/// `server_hash`, returning `Ok(())` when success and `Err(String)` when
-	/// failure, with a string describing the reason of failure.
+  /// Verify that an array of leaf_hashes could reconstruct this subtree's
+  /// `server_hash`, returning `Ok(())` when success and `Err(String)` when
+  /// failure, with a string describing the reason of failure.
   ///
   /// This function is only useful to those who want to do some custom API calling.
   /// If you're using a [`CTClient`](crate::CTClient), it will handle proof
   /// checking for you.
-	///
-	/// ## Panic
-	///
-	/// `verify` panics when `leaf_hashes` does not have the right length, which
-	/// should be `subtree.1 - subtree.0`.
-	pub fn verify(&self, leaf_hashes: &[[u8; 32]]) -> Result<(), String> {
+  ///
+  /// ## Panic
+  ///
+  /// `verify` panics when `leaf_hashes` does not have the right length, which
+  /// should be `subtree.1 - subtree.0`.
+  pub fn verify(&self, leaf_hashes: &[[u8; 32]]) -> Result<(), String> {
     use utils::combine_tree_hash;
-		let subtree_size = self.subtree.1 - self.subtree.0;
-		if leaf_hashes.len() as u64 != subtree_size {
-			panic!("expected leaf_hashes to have length {}, got {}", subtree_size, leaf_hashes.len());
-		}
-		if subtree_size == 1 {
-			return if leaf_hashes[0] != self.server_hash {
-				Err(format!("expected leaf_hashes to be [{}], got [{}]", utils::u8_to_hex(&self.server_hash), utils::u8_to_hex(&leaf_hashes[0])))
-			} else {
-				Ok(())
-			}
-		}
-		let mut round_hashes = Vec::from(leaf_hashes);
-		loop {
-			let mut new_round_hashes = Vec::new();
-			new_round_hashes.reserve(round_hashes.len() / 2);
-			for i in 0..(round_hashes.len() / 2) {
-				let hash_left = round_hashes[2*i];
-				let hash_right = round_hashes[2*i + 1];
-				new_round_hashes.push(combine_tree_hash(&hash_left, &hash_right));
-			}
-			if round_hashes.len() % 2 != 0 {
-				new_round_hashes.push(*round_hashes.last().unwrap());
-			}
-			round_hashes = new_round_hashes;
-			if round_hashes.len() == 1 {
-				break;
-			}
-		}
-		assert_eq!(round_hashes.len(), 1);
-		let calculated_hash = round_hashes[0];
-		if self.server_hash == calculated_hash {
-			Ok(())
-		} else {
-			Err(format!("Subtree {:?}: calculated that tree hash should be {}, but got {} from consistency check.", &self.subtree, utils::u8_to_hex(&calculated_hash), utils::u8_to_hex(&self.server_hash)))
-		}
-	}
+    let subtree_size = self.subtree.1 - self.subtree.0;
+    if leaf_hashes.len() as u64 != subtree_size {
+      panic!("expected leaf_hashes to have length {}, got {}", subtree_size, leaf_hashes.len());
+    }
+    if subtree_size == 1 {
+      return if leaf_hashes[0] != self.server_hash {
+        Err(format!("expected leaf_hashes to be [{}], got [{}]", utils::u8_to_hex(&self.server_hash), utils::u8_to_hex(&leaf_hashes[0])))
+      } else {
+        Ok(())
+      }
+    }
+    let mut round_hashes = Vec::from(leaf_hashes);
+    loop {
+      let mut new_round_hashes = Vec::new();
+      new_round_hashes.reserve(round_hashes.len() / 2);
+      for i in 0..(round_hashes.len() / 2) {
+        let hash_left = round_hashes[2*i];
+        let hash_right = round_hashes[2*i + 1];
+        new_round_hashes.push(combine_tree_hash(&hash_left, &hash_right));
+      }
+      if round_hashes.len() % 2 != 0 {
+        new_round_hashes.push(*round_hashes.last().unwrap());
+      }
+      round_hashes = new_round_hashes;
+      if round_hashes.len() == 1 {
+        break;
+      }
+    }
+    assert_eq!(round_hashes.len(), 1);
+    let calculated_hash = round_hashes[0];
+    if self.server_hash == calculated_hash {
+      Ok(())
+    } else {
+      Err(format!("Subtree {:?}: calculated that tree hash should be {}, but got {} from consistency check.", &self.subtree, utils::u8_to_hex(&calculated_hash), utils::u8_to_hex(&self.server_hash)))
+    }
+  }
 }
 
 #[test]
 fn verify_consistency_proof_new_tree_leaf_hashes_test() {
   use utils::{sha256, combine_tree_hash};
-	fn h(s: &str) -> [u8; 32] {
-		sha256(s.as_bytes())
-	}
-	fn c(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
-		combine_tree_hash(a, b)
-	}
+  fn h(s: &str) -> [u8; 32] {
+    sha256(s.as_bytes())
+  }
+  fn c(a: &[u8; 32], b: &[u8; 32]) -> [u8; 32] {
+    combine_tree_hash(a, b)
+  }
 
-	(ConsistencyProofPart{
-		subtree: (0, 1),
-		server_hash: h("a")
-	}).verify(&[h("a")]).unwrap();
+  (ConsistencyProofPart{
+    subtree: (0, 1),
+    server_hash: h("a")
+  }).verify(&[h("a")]).unwrap();
 
-	(ConsistencyProofPart{
-		subtree: (0, 1),
-		server_hash: h("a")
-	}).verify(&[h("b")]).expect_err("!");
+  (ConsistencyProofPart{
+    subtree: (0, 1),
+    server_hash: h("a")
+  }).verify(&[h("b")]).expect_err("!");
 
-	(ConsistencyProofPart{
-		subtree: (2, 4),
-		server_hash: c(&h("c"), &h("d"))
-	}).verify(&[h("c"), h("d")]).unwrap();
+  (ConsistencyProofPart{
+    subtree: (2, 4),
+    server_hash: c(&h("c"), &h("d"))
+  }).verify(&[h("c"), h("d")]).unwrap();
 
-	(ConsistencyProofPart{
-		subtree: (0, 6),
-		server_hash: c(&c(&c(&h("a"), &h("b")), &c(&h("c"), &h("d"))), &c(&h("e"), &h("f")))
-	}).verify(&[h("a"), h("b"), h("c"), h("d"), h("e"), h("f")]).unwrap();
+  (ConsistencyProofPart{
+    subtree: (0, 6),
+    server_hash: c(&c(&c(&h("a"), &h("b")), &c(&h("c"), &h("d"))), &c(&h("e"), &h("f")))
+  }).verify(&[h("a"), h("b"), h("c"), h("d"), h("e"), h("f")]).unwrap();
 
-	(ConsistencyProofPart{
-		subtree: (0, 6),
-		server_hash: c(&c(&c(&h("a"), &h("b")), &c(&h("c"), &h("d"))), &c(&h("e"), &h("f")))
-	}).verify(&[h("a"), h("b"), h("c"), h("g"), h("e"), h("f")]).expect_err("!");
+  (ConsistencyProofPart{
+    subtree: (0, 6),
+    server_hash: c(&c(&c(&h("a"), &h("b")), &c(&h("c"), &h("d"))), &c(&h("e"), &h("f")))
+  }).verify(&[h("a"), h("b"), h("c"), h("g"), h("e"), h("f")]).expect_err("!");
 
-	(ConsistencyProofPart{
-		subtree: (0, 6),
-		server_hash: c(&c(&c(&h("a"), &h("b")), &c(&h("c"), &h("d"))), &c(&h("e"), &h("f")))
-	}).verify(&[h("a"), h("b"), h("c"), h("d"), h("e"), h("g")]).expect_err("!");
+  (ConsistencyProofPart{
+    subtree: (0, 6),
+    server_hash: c(&c(&c(&h("a"), &h("b")), &c(&h("c"), &h("d"))), &c(&h("e"), &h("f")))
+  }).verify(&[h("a"), h("b"), h("c"), h("d"), h("e"), h("g")]).expect_err("!");
 
-	(ConsistencyProofPart{
-		subtree: (0, 4),
-		server_hash: c(&c(&h("a"), &h("b")), &c(&h("c"), &h("d")))
-	}).verify(&[h("a"), h("b"), h("c"), h("d")]).unwrap();
+  (ConsistencyProofPart{
+    subtree: (0, 4),
+    server_hash: c(&c(&h("a"), &h("b")), &c(&h("c"), &h("d")))
+  }).verify(&[h("a"), h("b"), h("c"), h("d")]).unwrap();
 
-	(ConsistencyProofPart{
-		subtree: (0, 4),
-		server_hash: c(&c(&h("a"), &h("b")), &c(&h("c"), &h("d")))
-	}).verify(&[h("c"), h("d"), h("a"), h("b")]).expect_err("!");
+  (ConsistencyProofPart{
+    subtree: (0, 4),
+    server_hash: c(&c(&h("a"), &h("b")), &c(&h("c"), &h("d")))
+  }).verify(&[h("c"), h("d"), h("a"), h("b")]).expect_err("!");
 }
 
 /// Fetch the consistency proof from prev_size to next_size from the server and
@@ -533,7 +533,7 @@ fn verify_consistency_proof_new_tree_leaf_hashes_test() {
 ///
 /// ...if prev_size >= next_size
 pub fn check_consistency_proof(client: &reqwest::blocking::Client, base_url: &reqwest::Url, perv_size: u64, next_size: u64, perv_root: &[u8; 32], next_root: &[u8; 32]) -> Result<Vec<ConsistencyProofPart>, Error> {
-	assert!(perv_size < next_size);
+  assert!(perv_size < next_size);
   let server_consistency_proof: jsons::ConsistencyProof = get_json(client, base_url, &format!("ct/v1/get-sth-consistency?first={}&second={}", perv_size, next_size))?;
   let server_consistency_proof = server_consistency_proof.consistency;
   let mut parsed_server_proof: Vec<[u8; 32]> = Vec::new();
@@ -604,7 +604,7 @@ impl<'a> Iterator for GetEntriesIter<'a> {
         next_sub_range.end = next_sub_range.start + next_entries.len() as u64;
         if next_entries.is_empty() {
           self.last_gotten_entries = (next_sub_range, Vec::new());
-					// fixme: ???
+          // fixme: ???
           self.next()
         } else {
           self.last_gotten_entries = (next_sub_range, next_entries.into_iter().map(Some).collect());
@@ -695,11 +695,11 @@ impl Leaf {
       }
     */
     fn err_invalid() -> Result<Leaf, Error> {
-			Err(Error::MalformedResponseBody("Invalid leaf data.".to_owned()))
-		}
+      Err(Error::MalformedResponseBody("Invalid leaf data.".to_owned()))
+    }
     fn err_invalid_extra() -> Result<Leaf, Error> {
-			Err(Error::MalformedResponseBody("Invalid extra data.".to_owned()))
-		}
+      Err(Error::MalformedResponseBody("Invalid extra data.".to_owned()))
+    }
     if leaf_input.len() < 2 {
       return err_invalid();
     }
@@ -782,13 +782,13 @@ impl Leaf {
         let _issuer_key_hash = &leaf_slice[0..32];
         leaf_slice = &leaf_slice[32..];
         if leaf_slice.len() < 3 {
-					return err_invalid();
-				}
+          return err_invalid();
+        }
         let len = u32::from_be_bytes([0, leaf_slice[0], leaf_slice[1], leaf_slice[2]]);
         leaf_slice = &leaf_slice[3..];
         if leaf_slice.len() < len as usize {
-					return err_invalid();
-				}
+          return err_invalid();
+        }
         let _x509_end = &leaf_slice[..len as usize]; // This is a "TBS" certificate - no signature and can't be parsed by OpenSSL.
         leaf_slice = &leaf_slice[len as usize..];
 
@@ -806,28 +806,28 @@ impl Leaf {
         let pre_cert_len = u32::from_be_bytes([0, extra_slice[0], extra_slice[1], extra_slice[2]]);
         extra_slice = &extra_slice[3..];
         if extra_slice.len() < pre_cert_len as usize {
-					return err_invalid_extra();
+          return err_invalid_extra();
         }
         let pre_cert_data = &extra_slice[..pre_cert_len as usize];
         extra_slice = &extra_slice[pre_cert_len as usize..];
         x509_chain = Vec::new();
         x509_chain.push(Vec::from(pre_cert_data));
         if extra_slice.len() < 3 {
-					return err_invalid_extra();
+          return err_invalid_extra();
         }
         let rest_len = u32::from_be_bytes([0, extra_slice[0], extra_slice[1], extra_slice[2]]);
         extra_slice = &extra_slice[3..];
         if extra_slice.len() != rest_len as usize {
-					return err_invalid_extra();
+          return err_invalid_extra();
         }
         while !extra_slice.is_empty() {
           if extra_slice.len() < 3 {
-						return err_invalid_extra();
+            return err_invalid_extra();
           }
           let len = u32::from_be_bytes([0, extra_slice[0], extra_slice[1], extra_slice[2]]);
           extra_slice = &extra_slice[3..];
           if extra_slice.len() < len as usize {
-						return err_invalid_extra();
+            return err_invalid_extra();
           }
           let data = &extra_slice[..len as usize];
           extra_slice = &extra_slice[len as usize..];
