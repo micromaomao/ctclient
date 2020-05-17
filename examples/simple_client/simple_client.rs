@@ -10,11 +10,11 @@ use rusqlite::types::Value;
 fn main () {
   env_logger::builder().filter_module(env!("CARGO_PKG_NAME"), LevelFilter::Info).init();
 
-  if env::args().len() != 2 {
+  if env::args_os().len() != 2 {
     eprintln!("Usage: ctclient <save-db>");
     exit(1);
   }
-  let save_path = env::args().nth(1).unwrap();
+  let save_path = env::args_os().nth(1).unwrap();
   let save_db = match Connection::open(&save_path) {
     Ok(f) => f,
     Err(e) => {
@@ -23,7 +23,7 @@ fn main () {
     }
   };
   if save_db.query_row("SELECT null FROM sqlite_master WHERE name = 'ctlogs'", NO_PARAMS, |_| {Ok(())}).optional().unwrap() == None {
-    save_db.execute_batch(include_str!("./save_db_init.sql")).expect("Can't run init.sql");
+    save_db.execute_batch(include_str!("save_db_init.sql")).expect("Can't run init.sql");
   }
   let (url, pub_key, init_tree_size, init_tree_hash) = save_db.query_row("SELECT url, pub_key, checked_tree_size, checked_tree_head FROM ctlogs", NO_PARAMS, |row| {
     Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?, u64::try_from(row.get_raw(2).as_i64()?).expect("negative tree size?"), row.get::<_, Vec<u8>>(3)?))
@@ -35,7 +35,7 @@ fn main () {
   };
   let mut last_thash: [u8; 32] = init_tree_hash[..].try_into().unwrap();
   loop {
-    let sthresult = client.update();
+    let sthresult = client.light_update();
     if let Some(sth) = sthresult.tree_head() {
       save_db.execute(r#"INSERT INTO "received_signed_tree_heads" (log_id, tree_size, "timestamp", tree_hash, signature) VALUES (0, ?, ?, ?, ?)"#, &[
         Value::Integer(sth.tree_size.try_into().unwrap()), Value::Integer(sth.timestamp.try_into().unwrap()),

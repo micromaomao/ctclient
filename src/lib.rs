@@ -21,8 +21,10 @@ use internal::new_http_client;
 pub mod utils;
 pub mod jsons;
 pub mod internal;
+pub mod certutils;
 
-use log::{info, warn, trace};
+use log::{info, warn};
+use openssl::x509::X509;
 
 /// Errors that this library could produce.
 #[derive(Debug)]
@@ -285,7 +287,12 @@ impl CTClient {
     &self.http_client
   }
 
-  /// Fetch the latest tree root, check all the new certificates, and update our
+  /// Calls `self.update()` with `None` as `cert_handler`.
+  pub fn light_update(&mut self) -> SthResult {
+    self.update(None::<fn(&[X509])>)
+  }
+
+  /// Fetch the latest tree root, check all the new certificates if `cert_handler` is a Some, and update our
   /// internal "last checked tree root".
   ///
   /// This function should never panic, no matter what the server does to us.
@@ -296,7 +303,9 @@ impl CTClient {
   /// To log the behavior of CT logs, store the returned tree head and signature in some kind
   /// of database (even when error). This can be used to prove a misconduct (such as a non-extending-only tree)
   /// in the future.
-  pub fn update(&mut self) -> SthResult {
+  pub fn update<H>(&mut self, mut cert_handler: Option<H>) -> SthResult
+    where H: FnMut(&[X509])
+  {
     let mut delaycheck = std::time::Instant::now();
     let sth = match internal::check_tree_head(&self.http_client, &self.base_url, &self.pub_key) {
       Ok(s) => s,
@@ -353,45 +362,49 @@ impl CTClient {
           Err(e) => return SthResult::ErrWithSth(e, sth)
         };
 
-        let i_start = self.latest_size;
-        let mut leafs = internal::get_entries(&self.http_client, &self.base_url, i_start..new_tree_size);
-        let mut leaf_hashes: Vec<[u8; 32]> = Vec::new();
-        leaf_hashes.reserve((new_tree_size - i_start) as usize);
-        for i in i_start..new_tree_size {
-          match leafs.next().unwrap() {
-            Ok(leaf) => {
-              leaf_hashes.push(leaf.hash);
-              if let Err(e) = self.check_leaf(&leaf) {
-                return SthResult::ErrWithSth(e, sth);
+        if cert_handler.is_some() {
+          let i_start = self.latest_size;
+          let mut leafs = internal::get_entries(&self.http_client, &self.base_url, i_start..new_tree_size);
+          let mut leaf_hashes: Vec<[u8; 32]> = Vec::new();
+          leaf_hashes.reserve((new_tree_size - i_start) as usize);
+          for i in i_start..new_tree_size {
+            match leafs.next().unwrap() {
+              Ok(leaf) => {
+                leaf_hashes.push(leaf.hash);
+                if let Err(e) = self.check_leaf(&leaf, &mut cert_handler) {
+                  return SthResult::ErrWithSth(e, sth);
+                }
+              },
+              Err(e) => {
+                return SthResult::ErrWithSth(
+                  if let Error::MalformedResponseBody(inner_e) = e {
+                    Error::MalformedResponseBody(format!("While parsing leaf #{}: {}", i, &inner_e))
+                  } else {
+                    e
+                  }, sth
+                );
               }
-            },
-            Err(e) => {
-              return SthResult::ErrWithSth(
-                if let Error::MalformedResponseBody(inner_e) = e {
-                  Error::MalformedResponseBody(format!("While parsing leaf #{}: {}", i, &inner_e))
-                } else {
-                  e
-                }, sth
-              );
+            }
+            if delaycheck.elapsed() > std::time::Duration::from_secs(1) {
+              info!("Catching up: {} / {} ({}%)", i, new_tree_size, ((i - i_start) * 1000 / (new_tree_size - i_start)) as f32 / 10f32);
+              delaycheck = std::time::Instant::now();
             }
           }
-          if delaycheck.elapsed() > std::time::Duration::from_secs(1) {
-            info!("Catching up: {} / {} ({}%)", i, new_tree_size, ((i - i_start) * 1000 / (new_tree_size - i_start)) as f32 / 10f32);
-            delaycheck = std::time::Instant::now();
+          assert_eq!(leaf_hashes.len(), (new_tree_size - i_start) as usize);
+          for proof_part in consistency_proof_parts.into_iter() {
+            assert!(proof_part.subtree.0 >= i_start);
+            assert!(proof_part.subtree.1 <= new_tree_size);
+            if let Err(e) = proof_part.verify(&leaf_hashes[(proof_part.subtree.0 - i_start) as usize..(proof_part.subtree.1 - i_start) as usize]) {
+              return SthResult::ErrWithSth(Error::CannotVerifyTreeData(e), sth);
+            }
           }
-        }
-        assert_eq!(leaf_hashes.len(), (new_tree_size - i_start) as usize);
-        for proof_part in consistency_proof_parts.into_iter() {
-          assert!(proof_part.subtree.0 >= i_start);
-          assert!(proof_part.subtree.1 <= new_tree_size);
-          if let Err(e) = proof_part.verify(&leaf_hashes[(proof_part.subtree.0 - i_start) as usize..(proof_part.subtree.1 - i_start) as usize]) {
-            return SthResult::ErrWithSth(Error::CannotVerifyTreeData(e), sth);
-          }
+          info!("CTClient: {} updated to {} {} (read {} leaves)", self.base_url.as_str(), new_tree_size, &utils::u8_to_hex(&new_tree_root), new_tree_size - i_start);
+        } else {
+          info!("CTClient: {} light updated to {} {}", self.base_url.as_str(), new_tree_size, &utils::u8_to_hex(&new_tree_root));
         }
 
         self.latest_size = new_tree_size;
         self.latest_tree_hash = new_tree_root;
-        info!("CTClient: {} updated to {} {} (read {} leaves)", self.base_url.as_str(), new_tree_size, &utils::u8_to_hex(&new_tree_root), new_tree_size - i_start);
         SthResult::Ok(sth)
       }
     }
@@ -399,7 +412,9 @@ impl CTClient {
 
   /// Called by [`Self::update`](crate::CTClient::update) for each leaf received
   /// to check the certificates. Usually no need to call yourself.
-  pub fn check_leaf(&self, leaf: &internal::Leaf) -> Result<(), Error> {
+  pub fn check_leaf<H>(&self, leaf: &internal::Leaf, cert_handler: &mut Option<H>) -> Result<(), Error>
+    where H: FnMut(&[X509])
+  {
     let chain: Vec<_> = leaf.x509_chain.iter().map(|der| {
       openssl::x509::X509::from_der(&der[..])
     }).collect();
@@ -408,45 +423,12 @@ impl CTClient {
         return Err(Error::BadCertificate(format!("While decoding certificate: {}", e)));
       }
     }
-    let chain: Vec<_> = chain.into_iter().map(|x| x.unwrap()).collect();
+    let chain: Vec<X509> = chain.into_iter().map(|x| x.unwrap()).collect();
     if chain.len() <= 1 {
       return Err(Error::BadCertificate("Empty certificate chain?".to_owned()));
     }
-    let mut is_first = true;
-    for cert in chain {
-      // I tried to use openssl to verify the certificate chain here, but the CT
-      // Precertificate Poison prevents it from working. (unhandled critical
-      // extension)
-      let try_common_names: Vec<_> = cert.subject_name().entries_by_nid(openssl::nid::Nid::COMMONNAME).map(|x| x.data().as_utf8()).collect();
-      let mut common_names: Vec<String> = Vec::new();
-      for cn in try_common_names {
-        if let Err(e) = cn {
-          return Err(Error::BadCertificate(format!("While parsing common name: {}", &e)));
-        }
-        common_names.push(String::from(AsRef::<str>::as_ref(&cn.unwrap())));
-      }
-      if is_first {
-        let mut dns_names: Vec<String> = Vec::new();
-        if let Some(san) = cert.subject_alt_names() {
-          for name in san.iter() {
-            if let Some(name) = name.dnsname() {
-              dns_names.push(String::from(name));
-            } else if let Some(uri) = name.uri() {
-              let url_parsed = reqwest::Url::parse(uri).map_err(|_| Error::BadCertificate("This certificate has a URI SNI, but the URI is not parsable.".to_owned()))?;
-              if let Some(host) = url_parsed.domain() {
-                dns_names.push(String::from(host));
-              }
-            }
-          }
-        }
-        for cn in common_names.iter() {
-          // TODO: determine if cn is a domain name
-          dns_names.push(cn.clone());
-        }
-        let expiry = cert.not_after();
-        trace!("Check leaf: {:?} ({}, etc...) not after = {}", &leaf, common_names.get(0).unwrap_or(&String::from("(no common name)")), expiry);
-      }
-      is_first = false;
+    if let Some(handler) = cert_handler {
+      handler(&chain);
     }
     Ok(())
   }
@@ -547,7 +529,7 @@ fn as_bytes_test() {
   assert_eq!(c.latest_size, c_clone.latest_size);
   assert_eq!(c.latest_tree_hash, c_clone.latest_tree_hash);
   assert_eq!(c.base_url, c_clone.base_url);
-  c_clone.update().unwrap(); // test public key
+  c_clone.light_update().unwrap(); // test public key
   let len = bytes.len();
   bytes[len - 1] ^= 1;
   CTClient::from_bytes(&bytes).expect_err("");
