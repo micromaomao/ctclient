@@ -294,16 +294,8 @@ impl CTClient {
   /// it is the same as last time, or if it rolled back (new tree_size < current tree_size).
   ///
   /// To log the behavior of CT logs, store the returned tree head and signature in some kind
-  /// of database. This can be used to prove a misconduct (such as a non-extending-only tree)
+  /// of database (even when error). This can be used to prove a misconduct (such as a non-extending-only tree)
   /// in the future.
-  ///
-  /// If this struct has just been returned by [`Self::from_bytes`], this will always be `None`.
-  ///
-  /// ## Returns
-  ///
-  /// `Some(STH)` if we had received a signed tree head before and it has not been returned.
-  /// `None` if the signed tree head is already returned away, or if we haven't made any requests to
-  /// the server yet.
   pub fn update(&mut self) -> SthResult {
     let mut delaycheck = std::time::Instant::now();
     let sth = match internal::check_tree_head(&self.http_client, &self.base_url, &self.pub_key) {
