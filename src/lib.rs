@@ -14,17 +14,18 @@
 // we don't need them.
 #![forbid(unsafe_code)]
 
-use std::{path, fmt, io};
+use std::{fmt, io, path};
+
+use log::{info, warn};
 use openssl::pkey::PKey;
+use openssl::x509::X509;
+
 use internal::new_http_client;
 
 pub mod utils;
 pub mod jsons;
 pub mod internal;
 pub mod certutils;
-
-use log::{info, warn};
-use openssl::x509::X509;
 
 /// Errors that this library could produce.
 #[derive(Debug)]
