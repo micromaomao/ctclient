@@ -16,6 +16,7 @@
 
 use std::{path, fmt, io};
 use openssl::pkey::PKey;
+use internal::new_http_client;
 
 pub mod utils;
 pub mod jsons;
@@ -53,8 +54,74 @@ pub enum Error {
   /// ConsistencyProofPart::verify failed
   CannotVerifyTreeData(String),
 
-  // Something's wrong with the certificate.
+  /// Something's wrong with the certificate.
   BadCertificate(String),
+}
+
+#[derive(Debug)]
+pub enum SthResult {
+  /// Got the new tree head.
+  Ok(SignedTreeHead),
+
+  /// Something went wrong and no tree head was received.
+  Err(Error),
+
+  /// Something went wrong, but the server returned a valid signed tree head.
+  /// The underlying error is wrapped inside. You may wish to log this.
+  ErrWithSth(Error, SignedTreeHead)
+}
+
+impl SthResult {
+  /// Return a signed tree head, if there is one received.
+  ///
+  /// This can return a `Some` even when there is error, if for example, the server returned a valid signed
+  /// tree head but failed to provide a consistency proof. You may wish to log this.
+  pub fn tree_head(&self) -> Option<&SignedTreeHead> {
+    match self {
+      SthResult::Ok(sth) => Some(sth),
+      SthResult::Err(_) => None,
+      SthResult::ErrWithSth(_, sth) => Some(sth)
+    }
+  }
+
+  pub fn is_ok(&self) -> bool {
+    match self {
+      SthResult::Ok(_) => true,
+      _ => false
+    }
+  }
+
+  pub fn is_err(&self) -> bool {
+    !self.is_ok()
+  }
+
+  /// Return the SignedTreeHead, if this is a Ok. Otherwise panic.
+  pub fn unwrap(self) -> SignedTreeHead {
+    match self {
+      SthResult::Ok(sth) => sth,
+      _ => {
+        panic!("unwrap called on SthResult with error: {}", self.unwrap_err())
+      }
+    }
+  }
+
+  /// Return the error, if this is a Err or ErrWithSth. Otherwise panic.
+  pub fn unwrap_err(self) -> Error {
+    match self {
+      SthResult::ErrWithSth(e, _) => e,
+      SthResult::Err(e) => e,
+      _ => panic!("unwrap_err called on SthResult that is ok.")
+    }
+  }
+
+  /// Return the SignedTreeHead, if this is a Ok or ErrWithSth. Otherwise panic.
+  pub fn unwrap_tree_head(self) -> SignedTreeHead {
+    match self {
+      SthResult::Ok(sth) => sth,
+      SthResult::ErrWithSth(_, sth) => sth,
+      SthResult::Err(e) => panic!("unwrap_tree_head called on SthResult with error: {}", e)
+    }
+  }
 }
 
 impl fmt::Display for Error {
@@ -74,6 +141,47 @@ impl fmt::Display for Error {
   }
 }
 
+/// A *signed tree head* (STH), as returned from the server. This encapsulate the state of the tree at
+/// some point in time.
+///
+/// This struct stores the signature but does not store the public key or log id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SignedTreeHead {
+  pub tree_size: u64,
+  pub timestamp: u64,
+  pub root_hash: [u8; 32],
+  /// Digitally signed struct
+  pub signature: Vec<u8>
+}
+
+impl SignedTreeHead {
+  /// Verify the contained signature against the log's public key.
+  pub fn verify(&self, pub_key: &PKey<openssl::pkey::Public>) -> Result<(), Error> {
+    let mut verify_body: Vec<u8> = Vec::new();
+    /*
+      From go source:
+      type TreeHeadSignature struct {
+        Version        Version       `tls:"maxval:255"`
+        SignatureType  SignatureType `tls:"maxval:255"` // == TreeHashSignatureType
+        Timestamp      uint64
+        TreeSize       uint64
+        SHA256RootHash SHA256Hash
+      }
+    */
+    verify_body.push(0); // Version = 0
+    verify_body.push(1); // SignatureType = TreeHashSignatureType
+    verify_body.extend_from_slice(&self.timestamp.to_be_bytes()); // Timestamp
+    verify_body.extend_from_slice(&self.tree_size.to_be_bytes()); // TreeSize
+    verify_body.extend_from_slice(&self.root_hash);
+    internal::verify_dss(&self.signature, pub_key, &verify_body).map_err(|e| {
+      match e {
+        Error::InvalidSignature(desc) => Error::InvalidSignature(format!("When checking STH signature: {}", &desc)),
+        other => other
+      }
+    })
+  }
+}
+
 /// A stateful CT monitor.
 ///
 /// It remembers a last checked tree root, so that it only checks the newly added
@@ -84,7 +192,7 @@ pub struct CTClient {
   pub_key: PKey<openssl::pkey::Public>,
   http_client: reqwest::blocking::Client,
   latest_size: u64,
-  latest_tree_hash: [u8; 32],
+  latest_tree_hash: [u8; 32]
 }
 
 impl fmt::Debug for CTClient {
@@ -92,8 +200,6 @@ impl fmt::Debug for CTClient {
     write!(f, "CT log {}: current root = {}, size = {}", self.base_url, utils::u8_to_hex(&self.latest_tree_hash[..]), self.latest_size)
   }
 }
-
-use internal::new_http_client;
 
 impl CTClient {
   /// Construct a new `CTClient` instance, and fetch the latest tree root.
@@ -122,13 +228,13 @@ impl CTClient {
     let base_url = reqwest::Url::parse(base_url).map_err(|e| Error::InvalidArgument(format!("Unable to parse url: {}", &e)))?;
     let http_client = new_http_client()?;
     let evp_pkey = PKey::public_key_from_der(pub_key).map_err(|e| Error::InvalidArgument(format!("Error parsing public key: {}", &e)))?;
-    let (current_size, root_hash) = internal::check_tree_head(&http_client, &base_url, &evp_pkey)?;
+    let sth = internal::check_tree_head(&http_client, &base_url, &evp_pkey)?;
     Ok(CTClient{
       base_url,
       pub_key: evp_pkey,
       http_client,
-      latest_size: current_size,
-      latest_tree_hash: root_hash,
+      latest_size: sth.tree_size,
+      latest_tree_hash: sth.root_hash
     })
   }
 
@@ -165,7 +271,7 @@ impl CTClient {
       pub_key: evp_pkey,
       http_client,
       latest_size: tree_size,
-      latest_tree_hash: tree_hash,
+      latest_tree_hash: tree_hash
     })
   }
 
@@ -184,28 +290,76 @@ impl CTClient {
   ///
   /// This function should never panic, no matter what the server does to us.
   ///
-  /// Returns the new tree size.
-  pub fn update(&mut self) -> Result<u64, Error> {
+  /// Return the latest *Signed Tree Head* (STH) returned by the server, even if
+  /// it is the same as last time, or if it rolled back (new tree_size < current tree_size).
+  ///
+  /// To log the behavior of CT logs, store the returned tree head and signature in some kind
+  /// of database. This can be used to prove a misconduct (such as a non-extending-only tree)
+  /// in the future.
+  ///
+  /// If this struct has just been returned by [`Self::from_bytes`], this will always be `None`.
+  ///
+  /// ## Returns
+  ///
+  /// `Some(STH)` if we had received a signed tree head before and it has not been returned.
+  /// `None` if the signed tree head is already returned away, or if we haven't made any requests to
+  /// the server yet.
+  pub fn update(&mut self) -> SthResult {
     let mut delaycheck = std::time::Instant::now();
-    let (new_tree_size, new_tree_root) = internal::check_tree_head(&self.http_client, &self.base_url, &self.pub_key)?;
+    let sth = match internal::check_tree_head(&self.http_client, &self.base_url, &self.pub_key) {
+      Ok(s) => s,
+      Err(e) => return SthResult::Err(e)
+    };
+    let new_tree_size = sth.tree_size;
+    let new_tree_root = sth.root_hash;
     use std::cmp::Ordering;
     match new_tree_size.cmp(&self.latest_size) {
       Ordering::Equal => {
         if new_tree_root == self.latest_tree_hash {
           info!("CTClient: {} remained the same.", self.base_url.as_str());
-          Ok(new_tree_size)
+          SthResult::Ok(sth)
         } else {
-          Err(Error::InvalidConsistencyProof(self.latest_size, new_tree_size, format!("Server forked! {} and {} both corrospond to tree_size {}", &utils::u8_to_hex(&self.latest_tree_hash), &utils::u8_to_hex(&new_tree_root), new_tree_size)))
+          SthResult::ErrWithSth(
+            Error::InvalidConsistencyProof(
+              self.latest_size, new_tree_size, format!("Server forked! {} and {} both correspond to tree_size {}", &utils::u8_to_hex(&self.latest_tree_hash), &utils::u8_to_hex(&new_tree_root), new_tree_size)
+            ), sth
+          )
         }
       },
       Ordering::Less => {
         // Make sure server isn't doing trick with us.
-        internal::check_consistency_proof(&self.http_client, &self.base_url, new_tree_size, self.latest_size, &new_tree_root, &self.latest_tree_hash)?;
-        warn!("{} rolled back? {} -> {}", self.base_url.as_str(), self.latest_size, new_tree_size);
-        Ok(self.latest_size)
+        match internal::check_consistency_proof(
+          &self.http_client,
+          &self.base_url,
+          new_tree_size,
+          self.latest_size,
+          &new_tree_root,
+          &self.latest_tree_hash
+        ) {
+          Ok(_) => {
+            warn!("{} rolled back? {} -> {}", self.base_url.as_str(), self.latest_size, new_tree_size);
+            SthResult::Ok(sth)
+          },
+          Err(e) => {
+            SthResult::ErrWithSth(
+              Error::InvalidConsistencyProof(
+                new_tree_size, self.latest_size, format!("Server rolled back, and can't provide a consistency proof from the rolled back tree to the original tree: {}", e)
+              ), sth
+            )
+          }
+        }
       },
       Ordering::Greater => {
-        let consistency_proof_parts = internal::check_consistency_proof(&self.http_client, &self.base_url, self.latest_size, new_tree_size, &self.latest_tree_hash, &new_tree_root)?;
+        let consistency_proof_parts = match internal::check_consistency_proof(&self.http_client,
+          &self.base_url,
+          self.latest_size,
+          new_tree_size,
+          &self.latest_tree_hash,
+          &new_tree_root
+        ) {
+          Ok(k) => k,
+          Err(e) => return SthResult::ErrWithSth(e, sth)
+        };
 
         let i_start = self.latest_size;
         let mut leafs = internal::get_entries(&self.http_client, &self.base_url, i_start..new_tree_size);
@@ -215,14 +369,18 @@ impl CTClient {
           match leafs.next().unwrap() {
             Ok(leaf) => {
               leaf_hashes.push(leaf.hash);
-              self.check_leaf(&leaf)?;
+              if let Err(e) = self.check_leaf(&leaf) {
+                return SthResult::ErrWithSth(e, sth);
+              }
             },
             Err(e) => {
-              if let Error::MalformedResponseBody(inner_e) = e {
-                return Err(Error::MalformedResponseBody(format!("While parsing leaf #{}: {}", i, &inner_e)));
-              } else {
-                return Err(e);
-              }
+              return SthResult::ErrWithSth(
+                if let Error::MalformedResponseBody(inner_e) = e {
+                  Error::MalformedResponseBody(format!("While parsing leaf #{}: {}", i, &inner_e))
+                } else {
+                  e
+                }, sth
+              );
             }
           }
           if delaycheck.elapsed() > std::time::Duration::from_secs(1) {
@@ -234,13 +392,15 @@ impl CTClient {
         for proof_part in consistency_proof_parts.into_iter() {
           assert!(proof_part.subtree.0 >= i_start);
           assert!(proof_part.subtree.1 <= new_tree_size);
-          proof_part.verify(&leaf_hashes[(proof_part.subtree.0 - i_start) as usize..(proof_part.subtree.1 - i_start) as usize]).map_err(Error::CannotVerifyTreeData)?;
+          if let Err(e) = proof_part.verify(&leaf_hashes[(proof_part.subtree.0 - i_start) as usize..(proof_part.subtree.1 - i_start) as usize]) {
+            return SthResult::ErrWithSth(Error::CannotVerifyTreeData(e), sth);
+          }
         }
 
         self.latest_size = new_tree_size;
         self.latest_tree_hash = new_tree_root;
         info!("CTClient: {} updated to {} {} (read {} leaves)", self.base_url.as_str(), new_tree_size, &utils::u8_to_hex(&new_tree_root), new_tree_size - i_start);
-        Ok(new_tree_size)
+        SthResult::Ok(sth)
       }
     }
   }
@@ -381,7 +541,7 @@ impl CTClient {
       pub_key,
       http_client: new_http_client()?,
       latest_size: tree_size,
-      latest_tree_hash: tree_hash,
+      latest_tree_hash: tree_hash
     })
   }
 }

@@ -8,13 +8,9 @@ authors = ["Mao Wtm <m@maowtm.org>"]
 edition = "2018"
 documentation = "https://docs.rs/ctclient"
 
-[[bin]]
-name = "ctclient"
-path = "src/bin.rs"
-
-[lib]
-name = "ctclient"
-path = "src/lib.rs"
+[[example]]
+name = "simple_client"
+path = "examples/simple_client.rs"
 
 [dependencies]
 reqwest = { version = "0.10.4", default-features = false, features = ["blocking", "native-tls", "gzip"] }
@@ -24,4 +20,7 @@ base64 = "0.12.1"
 openssl = "0.10.24"
 log = "0.4.7"
 
+[dev-dependencies]
+# for the example binary
 env_logger = "0.7.1"
+rusqlite = "0.23.1"

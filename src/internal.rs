@@ -1,7 +1,7 @@
 //! Things that are only useful if you are doing your own API calling.
 
 use openssl::pkey::PKey;
-use crate::{jsons, utils, Error};
+use crate::{jsons, utils, Error, SignedTreeHead};
 use std::convert::{TryFrom, TryInto};
 use log::trace;
 use std::fmt;
@@ -134,7 +134,7 @@ pub fn get_json<J: serde::de::DeserializeOwned>(client: &reqwest::blocking::Clie
   Ok(json)
 }
 
-/// Check, verify and return the latest tree head information from the CT log at
+/// Check, verify and return the latest tree head from the CT log at
 /// `base_url`.
 ///
 /// This function is only useful to those who want to do some custom CT API
@@ -147,37 +147,22 @@ pub fn get_json<J: serde::de::DeserializeOwned>(client: &reqwest::blocking::Clie
 ///
 /// * `client`: A [`reqwest::Client`](reqwest::Client) instance. See
 /// [`CTClient::get_reqwest_client`](crate::CTClient::get_reqwest_client)
-pub fn check_tree_head(client: &reqwest::blocking::Client, base_url: &reqwest::Url, pub_key: &PKey<openssl::pkey::Public>) -> Result<(u64, [u8; 32]), Error> {
+pub fn check_tree_head(client: &reqwest::blocking::Client, base_url: &reqwest::Url, pub_key: &PKey<openssl::pkey::Public>) -> Result<SignedTreeHead, Error> {
   let response: jsons::STH = get_json(client, base_url, "ct/v1/get-sth")?;
-  let mut verify_body: Vec<u8> = Vec::new();
-  /*
-    From go source:
-    type TreeHeadSignature struct {
-      Version        Version       `tls:"maxval:255"`
-      SignatureType  SignatureType `tls:"maxval:255"` // == TreeHashSignatureType
-      Timestamp      uint64
-      TreeSize       uint64
-      SHA256RootHash SHA256Hash
-    }
-  */
-  verify_body.push(0); // Version = 0
-  verify_body.push(1); // SignatureType = TreeHashSignatureType
-  verify_body.extend_from_slice(&response.timestamp.to_be_bytes()); // Timestamp
-  verify_body.extend_from_slice(&response.tree_size.to_be_bytes()); // TreeSize
   let root_hash = base64::decode(&response.sha256_root_hash).map_err(|e| Error::MalformedResponseBody(format!("base64 decode failure on root sha256: {} (trying to decode {:?})", &e, &response.sha256_root_hash)))?;
   if root_hash.len() != 32 {
     return Err(Error::MalformedResponseBody(format!("Invalid server response: sha256_root_hash should have length of 32. Server response is {:?}", &response)));
   }
-  verify_body.extend_from_slice(&root_hash[..]);
   let dss = base64::decode(&response.tree_head_signature).map_err(|e| Error::MalformedResponseBody(format!("base64 decode failure on signature: {} (trying to decode {:?})", &e, &response.tree_head_signature)))?;
-  verify_dss(&dss[..], pub_key, &verify_body[..]).map_err(|e| {
-    match e {
-      Error::InvalidSignature(desc) => Error::InvalidSignature(format!("When checking STH signature: {}", &desc)),
-      other => other
-    }
-  })?;
-  trace!("{} tree head now on {} {}", base_url.as_str(), response.tree_size, &utils::u8_to_hex(&root_hash));
-  Ok((response.tree_size, root_hash[..].try_into().unwrap()))
+  let sth = SignedTreeHead {
+    tree_size: response.tree_size,
+    timestamp: response.timestamp,
+    root_hash: root_hash[..].try_into().unwrap(),
+    signature: dss
+  };
+  sth.verify(pub_key)?;
+  trace!("{} tree head now on {} {}", base_url.as_str(), sth.tree_size, &utils::u8_to_hex(&sth.root_hash));
+  Ok(sth)
 }
 
 /// Function used by
