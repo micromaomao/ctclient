@@ -10,7 +10,7 @@ fn sha256_test() {
 
 /// Convert a hex string with no whitespace or other sepreator into `&[u8]`.
 ///
-/// ## Example:
+/// # Example:
 /// ```rust
 /// # use ctclient::utils::hex_to_u8;
 /// assert_eq!(&hex_to_u8("aabb"), b"\xaa\xbb");
@@ -30,7 +30,7 @@ pub fn hex_to_u8(hex: &str) -> Vec<u8> {
 
 /// Convert a `&[u8]` byte array to a lower-case, no-sepreator hex string.
 ///
-/// ## Example:
+/// # Example:
 /// ```rust
 /// # use ctclient::utils::u8_to_hex;
 /// assert_eq!(&u8_to_hex(b"\xaa\xbb"), "aabb");

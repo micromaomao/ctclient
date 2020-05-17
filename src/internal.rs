@@ -33,7 +33,7 @@ pub fn new_http_client() -> Result<reqwest::blocking::Client, Error> {
 /// calling. [`CTClient`](crate::CTClient) will automatically verify all
 /// signature.
 ///
-/// ## Params
+/// # Params
 ///
 /// * `dss`: the `DigitallySigned` struct. Often returned as a
 /// base64 "signature" json field by the CT server. De-base64 yourself before
@@ -143,7 +143,7 @@ pub fn get_json<J: serde::de::DeserializeOwned>(client: &reqwest::blocking::Clie
 /// [`CTClient::get_checked_tree_head`](crate::CTClient::get_checked_tree_head)
 /// instead.
 ///
-/// ## Params
+/// # Params
 ///
 /// * `client`: A [`reqwest::Client`](reqwest::Client) instance. See
 /// [`CTClient::get_reqwest_client`](crate::CTClient::get_reqwest_client)
@@ -248,7 +248,7 @@ pub struct ConsistencyProofPart {
 /// To fetch the consistency proof from the server and verifies it, call
 /// [`check_consistency_proof`](crate::internal::check_consistency_proof).
 ///
-/// ## `Ok(Vec<ConsistencyProofPart>)`
+/// # `Ok(Vec<ConsistencyProofPart>)`
 ///
 /// The `Ok` result of this function contains all components of the proof which
 /// describes a new tree (that's not in the previous tree). This can be useful if
@@ -259,11 +259,11 @@ pub struct ConsistencyProofPart {
 /// `ConsistencyProofPart::verify` with the array of leaf hashes. See its
 /// documentation for more info.
 ///
-/// ## Panic
+/// # Panic
 ///
 /// `verify_consistency_proof` panics if `perv_size` > `next_size`.
 ///
-/// ## TODO
+/// # TODO
 ///
 /// * Add test
 pub fn verify_consistency_proof(perv_size: u64, next_size: u64, server_provided_proof: &[[u8; 32]], perv_root: &[u8; 32], next_root: &[u8; 32]) -> Result<Vec<ConsistencyProofPart>, String> {
@@ -414,7 +414,7 @@ impl ConsistencyProofPart {
   /// If you're using a [`CTClient`](crate::CTClient), it will handle proof
   /// checking for you.
   ///
-  /// ## Panic
+  /// # Panic
   ///
   /// `verify` panics when `leaf_hashes` does not have the right length, which
   /// should be `subtree.1 - subtree.0`.
@@ -515,7 +515,7 @@ fn verify_consistency_proof_new_tree_leaf_hashes_test() {
 /// later. An `Err(...)` is returned if the proof is invalid, or some network
 /// error happened during the request.
 ///
-/// ## `Ok(Vec<ConsistencyProofPart>)`
+/// # `Ok(Vec<ConsistencyProofPart>)`
 ///
 /// The `Ok` result of this function contains all components of the proof which
 /// describes a new tree (that's not in the previous tree). This can be useful if
@@ -526,7 +526,7 @@ fn verify_consistency_proof_new_tree_leaf_hashes_test() {
 /// [`ConsistencyProofPart::verify`] with the array of leaf hashes. See its
 /// documentation for more info.
 ///
-/// ## Panics
+/// # Panics
 ///
 /// ...if prev_size >= next_size
 pub fn check_consistency_proof(client: &reqwest::blocking::Client, base_url: &reqwest::Url, perv_size: u64, next_size: u64, perv_root: &[u8; 32], next_root: &[u8; 32]) -> Result<Vec<ConsistencyProofPart>, Error> {

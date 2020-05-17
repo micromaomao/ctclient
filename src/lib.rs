@@ -210,11 +210,11 @@ impl CTClient {
   /// but could result in missing some important stuff. Not recommended for
   /// production. Use `from_bytes` and `as_bytes` to store state instead.
   ///
-  /// ## Errors
+  /// # Errors
   ///
   /// * If `base_url` does not ends with `/`.
   ///
-  /// ## Example
+  /// # Example
   ///
   /// ```
   /// use ctclient::CTClient;
@@ -249,7 +249,7 @@ impl CTClient {
   /// to avoid duplicate work (e.g. checking those which has already been checked in
   /// previous run).
   ///
-  /// ## Example
+  /// # Example
   ///
   /// ```
   /// use ctclient::{CTClient, utils};
