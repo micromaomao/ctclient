@@ -26,13 +26,13 @@ use crate::utils::{combine_tree_hash, largest_power_of_2_smaller_than, u8_to_hex
 /// # Example
 ///
 /// ```
-/// # use ctclient::internal::consistency_proof_partial;
+/// # use ctclient::internal::consistency_proof_parts;
 /// // Examples from RFC 6962 2.1.3 (https://tools.ietf.org/html/rfc6962#section-2.1.3)
-/// assert_eq!(consistency_proof_partial(3, 7), vec![(2, 3), (3, 4), (0, 2), (4, 7)]);
-/// assert_eq!(consistency_proof_partial(4, 7), vec![(0, 4), (4, 7)]);
-/// assert_eq!(consistency_proof_partial(6, 7), vec![(4, 6), (6, 7), (0, 4)]);
+/// assert_eq!(consistency_proof_parts(3, 7), vec![(2, 3), (3, 4), (0, 2), (4, 7)]);
+/// assert_eq!(consistency_proof_parts(4, 7), vec![(0, 4), (4, 7)]);
+/// assert_eq!(consistency_proof_parts(6, 7), vec![(4, 6), (6, 7), (0, 4)]);
 /// ```
-pub fn consistency_proof_partial(from_size: u64, to_size: u64) -> Vec<(u64, u64)> {
+pub fn consistency_proof_parts(from_size: u64, to_size: u64) -> Vec<(u64, u64)> {
   // The function 'verify_consistency_proof' contains detailed comments about the nature of consistency proofs.
 
   fn inner(result_store: &mut Vec<(u64, u64)>, subtree: (u64, u64), from_size: u64) {
@@ -60,11 +60,11 @@ pub fn consistency_proof_partial(from_size: u64, to_size: u64) -> Vec<(u64, u64)
 
 #[test]
 fn consistency_proof_partial_test() {
-  assert_eq!(consistency_proof_partial(753913835, 753913848).len(), 25);
-  assert_eq!(consistency_proof_partial(6, 6), vec![(0, 6)]);
-  assert_eq!(consistency_proof_partial(7, 7), vec![(0, 7)]);
+  assert_eq!(consistency_proof_parts(753913835, 753913848).len(), 25);
+  assert_eq!(consistency_proof_parts(6, 6), vec![(0, 6)]);
+  assert_eq!(consistency_proof_parts(7, 7), vec![(0, 7)]);
 
-  assert_eq!(consistency_proof_partial(4, 7), vec![(0, 4), (4, 7)]);
+  assert_eq!(consistency_proof_parts(4, 7), vec![(0, 4), (4, 7)]);
 }
 
 /// A subtree hash provided by the server in a consistency proof.
@@ -142,7 +142,7 @@ pub fn verify_consistency_proof(perv_size: u64, next_size: u64, server_provided_
 
   // Calculate the proof ourselves first so that we know how to use the server
   // provided proof.
-  let calculated_proof = consistency_proof_partial(perv_size, next_size);
+  let calculated_proof = consistency_proof_parts(perv_size, next_size);
 
   // The server will omit the first hash if it will otherwise simply be the
   // previous root hash. This happens when previous tree is a complete balanced
