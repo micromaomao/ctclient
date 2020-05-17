@@ -368,14 +368,14 @@ impl CTClient {
           let mut leaf_hashes: Vec<[u8; 32]> = Vec::new();
           leaf_hashes.reserve((new_tree_size - i_start) as usize);
           for i in i_start..new_tree_size {
-            match leafs.next().unwrap() {
-              Ok(leaf) => {
+            match leafs.next() {
+              Some(Ok(leaf)) => {
                 leaf_hashes.push(leaf.hash);
                 if let Err(e) = self.check_leaf(&leaf, &mut cert_handler) {
                   return SthResult::ErrWithSth(e, sth);
                 }
               },
-              Err(e) => {
+              Some(Err(e)) => {
                 return SthResult::ErrWithSth(
                   if let Error::MalformedResponseBody(inner_e) = e {
                     Error::MalformedResponseBody(format!("While parsing leaf #{}: {}", i, &inner_e))
@@ -383,6 +383,9 @@ impl CTClient {
                     e
                   }, sth
                 );
+              },
+              None => {
+                return SthResult::ErrWithSth(Error::CannotVerifyTreeData("GetEntries ended, but there's still more to get.".to_owned()), sth);
               }
             }
             if delaycheck.elapsed() > std::time::Duration::from_secs(1) {

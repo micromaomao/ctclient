@@ -589,8 +589,8 @@ impl<'a> Iterator for GetEntriesIter<'a> {
         next_sub_range.end = next_sub_range.start + next_entries.len() as u64;
         if next_entries.is_empty() {
           self.last_gotten_entries = (next_sub_range, Vec::new());
-          // fixme: ???
-          self.next()
+          self.done = true;
+          None
         } else {
           self.last_gotten_entries = (next_sub_range, next_entries.into_iter().map(Some).collect());
           self.next_index += 1;
