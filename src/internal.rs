@@ -170,6 +170,9 @@ pub fn check_tree_head(client: &reqwest::blocking::Client, base_url: &reqwest::U
 /// construct a consistency proof client side (which is used to check against the
 /// server proof)
 ///
+/// Returns an array of (u64, u64)s. Each (x: u64, y: u64) denotes that this part
+/// of the proof should be the hash of the subtree formed by leafs with number [x, y).
+///
 /// This function is only useful to those who want to do some custom proof
 /// handling. You should probably use
 /// [`verify_consistency_proof`](crate::internal::verify_consistency_proof)
@@ -178,7 +181,19 @@ pub fn check_tree_head(client: &reqwest::blocking::Client, base_url: &reqwest::U
 /// Will not omit the first component even if it's the same as `prev_tree_hash`
 /// (the server will). This means that the subtree represented by ret\[0] will always be
 /// contained within (0, from_size) (i.e. already known).
+///
+/// # Example
+///
+/// ```
+/// # use ctclient::internal::consistency_proof_partial;
+/// // Examples from RFC 6962 2.1.3 (https://tools.ietf.org/html/rfc6962#section-2.1.3)
+/// assert_eq!(consistency_proof_partial(3, 7), vec![(2, 3), (3, 4), (0, 2), (4, 7)]);
+/// assert_eq!(consistency_proof_partial(4, 7), vec![(0, 4), (4, 7)]);
+/// assert_eq!(consistency_proof_partial(6, 7), vec![(4, 6), (6, 7), (0, 4)]);
+/// ```
 pub fn consistency_proof_partial(from_size: u64, to_size: u64) -> Vec<(u64, u64)> {
+  // The function 'verify_consistency_proof' contains detailed comments about the nature of consistency proofs.
+
   fn inner(result_store: &mut Vec<(u64, u64)>, subtree: (u64, u64), from_size: u64) {
     use utils::largest_power_of_2_smaller_than;
     assert!(subtree.0 < subtree.1);
@@ -205,14 +220,11 @@ pub fn consistency_proof_partial(from_size: u64, to_size: u64) -> Vec<(u64, u64)
 
 #[test]
 fn consistency_proof_partial_test() {
-  // Examples from RFC 6962 2.1.3 (https://tools.ietf.org/html/rfc6962#section-2.1.3)
-  assert_eq!(consistency_proof_partial(3, 7), vec![(2, 3), (3, 4), (0, 2), (4, 7)]);
-  assert_eq!(consistency_proof_partial(4, 7), vec![(0, 4), (4, 7)]);
-  assert_eq!(consistency_proof_partial(6, 7), vec![(4, 6), (6, 7), (0, 4)]);
-
   assert_eq!(consistency_proof_partial(753913835, 753913848).len(), 25);
   assert_eq!(consistency_proof_partial(6, 6), vec![(0, 6)]);
   assert_eq!(consistency_proof_partial(7, 7), vec![(0, 7)]);
+
+  assert_eq!(consistency_proof_partial(4, 7), vec![(0, 4), (4, 7)]);
 }
 
 /// A subtree hash provided by the server in a consistency proof.
