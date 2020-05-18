@@ -441,10 +441,9 @@ impl CTClient {
       let expected_tbs = x509_to_tbs(&cert_clone)
           .map_err(|e| Error::Unknown(format!("x509_to_tbs errored: {}", e)))?;
       if tbs != &expected_tbs {
-        eprintln!("given tbs:             {}", utils::u8_to_hex(&tbs));
-        eprintln!("openssl generated tbs: {}", utils::u8_to_hex(&expected_tbs));
         return Err(Error::BadCertificate("TBS does not match pre-cert.".to_owned()));
       }
+      // todo: test this part.
     }
     if let Some(handler) = cert_handler {
       handler(&chain);

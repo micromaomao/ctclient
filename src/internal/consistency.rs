@@ -296,6 +296,7 @@ impl ConsistencyProofPart {
 
 #[test]
 fn verify_consistency_proof_new_tree_leaf_hashes_test() {
+  use crate::utils::sha256;
   fn h(s: &str) -> [u8; 32] {
     sha256(s.as_bytes())
   }
