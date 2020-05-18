@@ -16,6 +16,9 @@ pub struct Leaf {
   /// The first cert is the end entity cert (or pre cert, if `is_pre_cert` is
   /// true), and the last is the root CA.
   pub x509_chain: Vec<Vec<u8>>,
+  /// When is_pre_cert is true, this contains the tbs certificate found at the leaf input data.
+  /// You should verify that this is the same certificate as x509_chain\[0], except not signed.
+  pub tbs_cert: Option<Vec<u8>>
 }
 
 impl Leaf {
@@ -27,6 +30,7 @@ impl Leaf {
     let hash = utils::sha256(&hash_data);
     let is_pre_cert;
     let mut x509_chain;
+    let mut tbs = None;
     /*
       type MerkleTreeLeaf struct {
         Version          Version           `tls:"maxval:255"`
@@ -129,8 +133,10 @@ impl Leaf {
         if leaf_slice.len() < len as usize {
           return err_invalid();
         }
-        let _x509_end = &leaf_slice[..len as usize]; // This is a "TBS" certificate - no signature and can't be parsed by OpenSSL.
+        let tbs_data = &leaf_slice[..len as usize]; // This is a "to-be-signed" certificate - no signature and can't be parsed by OpenSSL.
         leaf_slice = &leaf_slice[len as usize..];
+
+        tbs = Some(tbs_data.to_vec());
 
         /* Extra data:
           type PrecertChainEntry struct {
@@ -186,7 +192,7 @@ impl Leaf {
     if leaf_slice.len() != extension_len as usize {
       return err_invalid();
     }
-    Ok(Leaf{hash, is_pre_cert, x509_chain})
+    Ok(Leaf{hash, is_pre_cert, x509_chain, tbs_cert: tbs})
   }
 }
 

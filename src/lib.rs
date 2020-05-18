@@ -11,8 +11,8 @@
 //! This project is not a beginner tutorial on how a CT log works. Read [the
 //! RFC](https://tools.ietf.org/html/rfc6962) first.
 
-// we don't need them.
-#![forbid(unsafe_code)]
+#[macro_use]
+extern crate lazy_static;
 
 use std::{fmt, io, path};
 
@@ -430,6 +430,21 @@ impl CTClient {
     let chain: Vec<X509> = chain.into_iter().map(|x| x.unwrap()).collect();
     if chain.len() <= 1 {
       return Err(Error::BadCertificate("Empty certificate chain?".to_owned()));
+    }
+    if let Some(tbs) = &leaf.tbs_cert {
+      use internal::openssl_utils::{x509_to_tbs, x509_remove_poison};
+      let cert = chain[0].as_ref();
+      let mut cert_clone = X509::from_der(
+        &cert.to_der().map_err(|e| Error::Unknown(format!("Duplicating certificate: {}", e)))?
+      ).map_err(|e| Error::Unknown(format!("Duplicating certificate: {}", e)))?;
+      x509_remove_poison(&mut cert_clone).map_err(|e| Error::Unknown(format!("While removing poison: {}", e)))?;
+      let expected_tbs = x509_to_tbs(&cert_clone)
+          .map_err(|e| Error::Unknown(format!("x509_to_tbs errored: {}", e)))?;
+      if tbs != &expected_tbs {
+        eprintln!("given tbs:             {}", utils::u8_to_hex(&tbs));
+        eprintln!("openssl generated tbs: {}", utils::u8_to_hex(&expected_tbs));
+        return Err(Error::BadCertificate("TBS does not match pre-cert.".to_owned()));
+      }
     }
     if let Some(handler) = cert_handler {
       handler(&chain);

@@ -18,7 +18,10 @@ serde = { version = "1.0.97", features = ["derive"] }
 serde_json = "1.0.40"
 base64 = "0.12.1"
 openssl = "0.10.24"
+foreign-types-shared = "0.1.1"
+openssl-sys = "0.9.56"
 log = "0.4.7"
+lazy_static = "1.4.0"
 
 [dev-dependencies]
 # for the example binary

@@ -14,7 +14,7 @@ fn main() {
   const URL: &str = "https://ct.googleapis.com/logs/argon2020/";
   let mut client = CTClient::new_from_latest_th(URL, &public_key).unwrap();
   loop {
-    client.update(Some(|certs: &[X509]| {
+    let update_result = client.update(Some(|certs: &[X509]| {
       let leaf = &certs[0];
       let ca = &certs[1];
       let canames = certutils::get_common_names(ca).unwrap();
@@ -32,6 +32,9 @@ fn main() {
         print!("\n");
       }
     }));
+    if update_result.is_err() {
+      eprintln!("Error: {}", update_result.unwrap_err());
+    }
     std::io::stdout().flush().unwrap();
   }
 }

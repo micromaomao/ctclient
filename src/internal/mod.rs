@@ -11,6 +11,7 @@ mod consistency;
 mod get_entries;
 mod leaf;
 mod digitally_signed_struct;
+pub mod openssl_utils;
 pub use consistency::*;
 pub use digitally_signed_struct::*;
 pub use get_entries::*;
