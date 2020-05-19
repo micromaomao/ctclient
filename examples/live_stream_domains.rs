@@ -34,6 +34,8 @@ fn main() {
     }));
     if update_result.is_err() {
       eprintln!("Error: {}", update_result.unwrap_err());
+    } else {
+      dbg!(update_result.unwrap_tree_head().tree_size);
     }
     std::io::stdout().flush().unwrap();
   }

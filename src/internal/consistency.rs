@@ -365,9 +365,9 @@ fn verify_consistency_proof_new_tree_leaf_hashes_test() {
 /// # Panics
 ///
 /// ...if prev_size >= next_size
-pub fn check_consistency_proof(client: &reqwest::blocking::Client, base_url: &reqwest::Url, perv_size: u64, next_size: u64, perv_root: &[u8; 32], next_root: &[u8; 32]) -> Result<Vec<ConsistencyProofPart>, Error> {
-  assert!(perv_size < next_size);
-  let server_consistency_proof: jsons::ConsistencyProof = get_json(client, base_url, &format!("ct/v1/get-sth-consistency?first={}&second={}", perv_size, next_size))?;
+pub fn check_consistency_proof(client: &reqwest::blocking::Client, base_url: &reqwest::Url, prev_size: u64, next_size: u64, perv_root: &[u8; 32], next_root: &[u8; 32]) -> Result<Vec<ConsistencyProofPart>, Error> {
+  assert!(prev_size < next_size);
+  let server_consistency_proof: jsons::ConsistencyProof = get_json(client, base_url, &format!("ct/v1/get-sth-consistency?first={}&second={}", prev_size, next_size))?;
   let server_consistency_proof = server_consistency_proof.consistency;
   let mut parsed_server_proof: Vec<[u8; 32]> = Vec::new();
   parsed_server_proof.reserve(server_consistency_proof.len());
@@ -381,5 +381,6 @@ pub fn check_consistency_proof(client: &reqwest::blocking::Client, base_url: &re
     parsed_server_proof.push(decoded[..].try_into().unwrap());
   }
   assert_eq!(parsed_server_proof.len(), n);
-  verify_consistency_proof(perv_size, next_size, &parsed_server_proof, perv_root, next_root).map_err(|e| Error::InvalidConsistencyProof(perv_size, next_size, e))
+  verify_consistency_proof(prev_size, next_size, &parsed_server_proof, perv_root, next_root)
+      .map_err(|e| Error::InvalidConsistencyProof{prev_size, new_size: next_size, desc: e})
 }

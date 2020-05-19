@@ -51,14 +51,17 @@ pub enum Error {
   /// Server responded with something bad (e.g. malformed JSON)
   MalformedResponseBody(String),
 
-  /// Server returned an invalid consistency proof. (prev_size, new_size, desc)
-  InvalidConsistencyProof(u64, u64, String),
+  /// Server returned an invalid consistency proof.
+  InvalidConsistencyProof { prev_size: u64, new_size: u64, desc: String },
 
   /// ConsistencyProofPart::verify failed
   CannotVerifyTreeData(String),
 
   /// Something's wrong with the certificate.
   BadCertificate(String),
+
+  /// Server returned an invalid inclusion proof.
+  InvalidInclusionProof { tree_size: u64, leaf_index: u64, desc: String },
 }
 
 #[derive(Debug)]
@@ -137,9 +140,10 @@ impl fmt::Display for Error {
       Error::InvalidSignature(desc) => write!(f, "Invalid signature received: {}", &desc),
       Error::InvalidResponseStatus(response_code) => write!(f, "Server responded with {} {}", response_code.as_u16(), response_code.as_str()),
       Error::MalformedResponseBody(desc) => write!(f, "Unable to parse server response: {}", &desc),
-      Error::InvalidConsistencyProof(prev_size, new_size, desc) => write!(f, "Server provided an invalid consistency proof from {} to {}: {}", prev_size, new_size, &desc),
+      Error::InvalidConsistencyProof {prev_size, new_size, desc} => write!(f, "Server provided an invalid consistency proof from {} to {}: {}", prev_size, new_size, &desc),
       Error::CannotVerifyTreeData(desc) => write!(f, "The certificates returned by the server is inconsistent with the previously provided consistency proof: {}", &desc),
       Error::BadCertificate(desc) => write!(f, "The certificate returned by the server has a problem: {}", &desc),
+      Error::InvalidInclusionProof {tree_size, leaf_index, desc} => write!(f, "Server provided an invalid inclusion proof of {} in tree with size {}: {}", leaf_index, tree_size, desc)
     }
   }
 }
@@ -322,9 +326,9 @@ impl CTClient {
           SthResult::Ok(sth)
         } else {
           SthResult::ErrWithSth(
-            Error::InvalidConsistencyProof(
-              self.latest_size, new_tree_size, format!("Server forked! {} and {} both correspond to tree_size {}", &utils::u8_to_hex(&self.latest_tree_hash), &utils::u8_to_hex(&new_tree_root), new_tree_size)
-            ), sth
+            Error::InvalidConsistencyProof {
+              prev_size: self.latest_size, new_size: new_tree_size, desc: format!("Server forked! {} and {} both correspond to tree_size {}", &utils::u8_to_hex(&self.latest_tree_hash), &utils::u8_to_hex(&new_tree_root), new_tree_size)
+            }, sth
           )
         }
       },
@@ -344,9 +348,9 @@ impl CTClient {
           },
           Err(e) => {
             SthResult::ErrWithSth(
-              Error::InvalidConsistencyProof(
-                new_tree_size, self.latest_size, format!("Server rolled back, and can't provide a consistency proof from the rolled back tree to the original tree: {}", e)
-              ), sth
+              Error::InvalidConsistencyProof {
+                prev_size: new_tree_size, new_size: self.latest_size, desc: format!("Server rolled back, and can't provide a consistency proof from the rolled back tree to the original tree: {}", e)
+              }, sth
             )
           }
         }

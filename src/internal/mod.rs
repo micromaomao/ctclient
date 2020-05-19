@@ -1,8 +1,10 @@
 //! Things that are only useful if you are doing your own API calling.
+//!
+//! Note that the RFC calls inclusion proof "audit proof".
 
 use std::convert::TryInto;
 
-use log::trace;
+use log::{debug, trace};
 use openssl::pkey::PKey;
 
 use crate::{Error, jsons, SignedTreeHead, utils};
@@ -12,9 +14,11 @@ mod get_entries;
 mod leaf;
 mod digitally_signed_struct;
 pub mod openssl_utils;
+mod inclusion;
 pub use consistency::*;
 pub use digitally_signed_struct::*;
 pub use get_entries::*;
+pub use inclusion::*;
 pub use leaf::*;
 
 /// Construct a new [reqwest::Client](reqwest::Client) to be used with the
@@ -43,12 +47,12 @@ pub fn get_json<J: serde::de::DeserializeOwned>(client: &reqwest::blocking::Clie
   let url_str = url.as_str().to_owned();
   let response = client.get(url).send().map_err(Error::NetIO)?;
   if response.status().as_u16() != 200 {
-    trace!("GET {} -> {}", &url_str, response.status());
+    debug!("GET {} -> {}", &url_str, response.status());
     return Err(Error::InvalidResponseStatus(response.status()));
   }
   let response = response.text().map_err(Error::NetIO)?;
   if response.len() > 150 {
-    trace!("GET {} -> {:?}...", &url_str, &response[..150]);
+    debug!("GET {} -> {:?}...", &url_str, &response[..150]);
   } else {
     trace!("GET {} -> {:?}", &url_str, &response);
   }

@@ -25,3 +25,9 @@ pub struct LeafEntry {
   pub leaf_input: String,
   pub extra_data: String,
 }
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct AuditProof {
+  pub leaf_index: u64,
+  pub audit_path: Vec<String>,
+}
