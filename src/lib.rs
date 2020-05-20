@@ -397,6 +397,15 @@ impl CTClient {
     if chain.len() <= 1 {
       return Err(Error::BadCertificate("Empty certificate chain?".to_owned()));
     }
+    for part in chain.windows(2) {
+      let ca = &part[1];
+      let target = &part[0];
+      let ca_pkey = ca.public_key().map_err(|e| Error::BadCertificate(format!("Can't get public key from ca: {}", e)))?;
+      let verify_success = target.verify(&ca_pkey).map_err(|e| Error::Unknown(format!("{}", e)))?;
+      if !verify_success {
+        return Err(Error::BadCertificate("Invalid certificate chain.".to_owned()));
+      }
+    }
     if let Some(tbs) = &leaf.tbs_cert {
       use internal::openssl_utils::{x509_to_tbs, x509_remove_poison};
       let cert = chain[0].as_ref();
