@@ -420,6 +420,19 @@ impl CTClient {
       }
       // todo: test this part.
     }
+
+    debug_assert!({
+      let calculated_leaf_hash = if leaf.is_pre_cert {
+        internal::construct_precert_leaf_hash(leaf.tbs_cert.as_ref().map(|x| &x[..]).unwrap(), {
+          &utils::sha256(&chain[1].public_key().unwrap().public_key_to_der().unwrap())
+        }, leaf.timestamp, &leaf.extensions)
+      } else {
+        internal::construct_x509_leaf_hash(&chain[0].to_der().unwrap(), leaf.timestamp, &leaf.extensions)
+      };
+      assert_eq!(calculated_leaf_hash, leaf.hash);
+      true
+    });
+
     if let Some(handler) = cert_handler {
       handler(&chain);
     }
