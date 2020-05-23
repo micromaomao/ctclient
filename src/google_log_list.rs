@@ -1,3 +1,5 @@
+//! Downloading of log list from Google.
+
 use crate::Error;
 use crate::internal::new_http_client;
 
@@ -24,11 +26,13 @@ struct LogJson {
   url: String
 }
 
+/// A downloaded log list.
 #[derive(Debug, Clone)]
 pub struct LogList {
   pub map_id_to_log: HashMap<Vec<u8>, Log>
 }
 
+/// A log in [`LogList`].
 #[derive(Debug, Clone)]
 pub struct Log {
   pub pub_key: Vec<u8>,
@@ -36,6 +40,7 @@ pub struct Log {
 }
 
 impl LogList {
+  /// Download the log list at runtime.
   pub fn get() -> Result<LogList, Error> {
     let client = new_http_client()?;
     let json: ResponseJSON = client.get("https://www.gstatic.com/ct/log_list/v2/log_list.json").send().map_err(|e| Error::NetIO(e))?
@@ -65,7 +70,8 @@ impl LogList {
     })
   }
 
-  pub fn find_by_id(&self, id: &[u8]) -> Option<&Log> {
+  /// Lookup a [`Log`] by its 32-byte `log_id`.
+  pub fn find_by_id<'a, 'b>(&'a self, id: &'b [u8]) -> Option<&'a Log> {
     self.map_id_to_log.get(id)
   }
 }

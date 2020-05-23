@@ -1,6 +1,7 @@
 use openssl::x509::X509Ref;
 use crate::Error;
 
+/// Return the common name of the certificate. Usually will only contains one. May be empty.
 pub fn get_common_names<R: AsRef<X509Ref>>(cert: &R) -> Result<Vec<String>, Error> {
   let cert = cert.as_ref();
   let try_common_names: Vec<_> = cert.subject_name().entries_by_nid(openssl::nid::Nid::COMMONNAME)
@@ -15,6 +16,9 @@ pub fn get_common_names<R: AsRef<X509Ref>>(cert: &R) -> Result<Vec<String>, Erro
   Ok(common_names)
 }
 
+/// Return the DNS names in the subjectAlternativeNames of the certificate as well as its common name.
+///
+/// Result may contain duplicate items.
 pub fn get_dns_names<R: AsRef<X509Ref>>(cert: &R) -> Result<Vec<String>, Error> {
   let cert = cert.as_ref();
   let mut names = get_common_names(cert)?;

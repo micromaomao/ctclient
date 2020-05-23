@@ -5,7 +5,7 @@ use openssl::x509::X509;
 
 use ctclient::CTClient;
 use ctclient::google_log_list::LogList;
-use ctclient::internal::{check_inclusion_proof, construct_precert_leaf_hash, parse_certificate_sct_list, SCTInner};
+use ctclient::internal::{check_inclusion_proof, construct_precert_leaf_hash, parse_certificate_sct_list, SctEntry};
 use ctclient::utils::u8_to_hex;
 
 fn main() {
@@ -20,7 +20,7 @@ fn main() {
     eprintln!("Expected at least 2 certs.");
     exit(1);
   }
-  let sct_list = parse_certificate_sct_list(chain[0].as_ref(), chain[1].as_ref()).expect("Unable to parse sct list");
+  let sct_list = ctclient::internal::SignedCertificateTimestamp::from_certificate_with_sct_extension(chain[0].as_ref(), chain[1].as_ref()).expect("Unable to parse sct list");
   if sct_list.is_empty() {
     println!("Did not found any SCTs in the certificate.");
     exit(0);
@@ -34,7 +34,7 @@ fn main() {
     let time = SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(timestamp)).unwrap();
     println!("  timestamp = {} ({} days ago)", timestamp, (time.elapsed().unwrap().as_secs_f32() / 60f32 / 60f32 / 24f32).round());
     let leaf_hash = match &sct.entry {
-      SCTInner::PreCert { tbs, issuer_key_hash } => {
+      SctEntry::PreCert { tbs, issuer_key_hash } => {
         construct_precert_leaf_hash(&tbs[..], &issuer_key_hash[..], sct.timestamp, &sct.extensions_data)
       }
       _ => unimplemented!()
