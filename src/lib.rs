@@ -11,7 +11,9 @@
 //! This project is not a beginner tutorial on how a CT log works. Read [the
 //! RFC](https://tools.ietf.org/html/rfc6962) first.
 
-#[macro_use]
+// todo: gossiping
+
+#[macro_use(lazy_static)]
 extern crate lazy_static;
 
 use std::{fmt, io, path};
@@ -21,6 +23,11 @@ use openssl::pkey::PKey;
 use openssl::x509::X509;
 
 use internal::new_http_client;
+pub use sth::SignedTreeHead;
+
+use crate::internal::openssl_ffi::x509_clone;
+
+mod sth;
 
 pub mod utils;
 pub mod jsons;
@@ -147,9 +154,6 @@ impl fmt::Display for Error {
     }
   }
 }
-
-mod sth;
-pub use sth::SignedTreeHead;
 
 /// A stateful CT monitor.
 ///
@@ -407,11 +411,9 @@ impl CTClient {
       }
     }
     if let Some(tbs) = &leaf.tbs_cert {
-      use internal::openssl_utils::{x509_to_tbs, x509_remove_poison};
+      use internal::openssl_ffi::{x509_to_tbs, x509_remove_poison};
       let cert = chain[0].as_ref();
-      let mut cert_clone = X509::from_der(
-        &cert.to_der().map_err(|e| Error::Unknown(format!("Duplicating certificate: {}", e)))?
-      ).map_err(|e| Error::Unknown(format!("Duplicating certificate: {}", e)))?;
+      let mut cert_clone = x509_clone(&cert).map_err(|e| Error::Unknown(format!("Duplicating certificate: {}", e)))?;
       x509_remove_poison(&mut cert_clone).map_err(|e| Error::Unknown(format!("While removing poison: {}", e)))?;
       let expected_tbs = x509_to_tbs(&cert_clone)
           .map_err(|e| Error::Unknown(format!("x509_to_tbs errored: {}", e)))?;

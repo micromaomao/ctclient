@@ -7,19 +7,22 @@ use std::convert::TryInto;
 use log::{debug, trace};
 use openssl::pkey::PKey;
 
+pub use consistency::*;
+pub use digitally_signed_struct::*;
+pub use get_entries::*;
+pub use inclusion::*;
+pub use leaf::*;
+pub use sct::*;
+
 use crate::{Error, jsons, SignedTreeHead, utils};
 
 mod consistency;
 mod get_entries;
 mod leaf;
 mod digitally_signed_struct;
-pub mod openssl_utils;
+pub mod openssl_ffi;
 mod inclusion;
-pub use consistency::*;
-pub use digitally_signed_struct::*;
-pub use get_entries::*;
-pub use inclusion::*;
-pub use leaf::*;
+mod sct;
 
 /// Construct a new [reqwest::Client](reqwest::Client) to be used with the
 /// functions in this module. You don't necessary need to use this.
