@@ -7,6 +7,7 @@ use rusqlite::{Connection, OptionalExtension, NO_PARAMS};
 use std::convert::{TryInto, TryFrom};
 use rusqlite::types::Value;
 use openssl::x509::X509;
+use ctclient::certutils::get_dns_names;
 
 fn main () {
   env_logger::builder().filter_module(env!("CARGO_PKG_NAME"), LevelFilter::Info).init();
@@ -37,7 +38,27 @@ fn main () {
   let mut last_thash: [u8; 32] = init_tree_hash[..].try_into().unwrap();
   loop {
     let sthresult = client.update(Some(|certs: &[X509]| {
-      // todo
+      let head = &certs[0];
+      let mut dns_names = match get_dns_names(head) {
+        Ok(d) => d,
+        Err(e) => {
+          eprintln!("Error getting dns names from certificate: {}", e);
+          return;
+        }
+      };
+      dns_names.sort_unstable();
+      dns_names.dedup_by(|a, b| a.eq_ignore_ascii_case(&b));
+      for n in dns_names.iter_mut() {
+        *n = n.to_ascii_lowercase();
+        if n.ends_with(".merkleforest.xyz") || n == "merkleforest.xyz" {
+          save_db.execute(r#"INSERT INTO "found_my_certs" (log_id, x509_der, ca_der) VALUES (0, ?, ?);"#, &[
+            Value::Blob(head.to_der().unwrap()),
+            Value::Blob(certs[1].to_der().unwrap())
+          ]).expect("Unable to record cert");
+          println!("Found cert with the following dns names: {}", dns_names.join(", "));
+          break;
+        }
+      }
     }));
     if let Some(sth) = sthresult.tree_head() {
       save_db.execute(r#"INSERT INTO "received_signed_tree_heads" (log_id, tree_size, "timestamp", tree_hash, signature) VALUES (0, ?, ?, ?, ?)"#, &[

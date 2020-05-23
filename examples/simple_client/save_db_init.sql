@@ -23,3 +23,9 @@ INSERT INTO "ctlogs" (id, url, pub_key, checked_tree_size, checked_tree_head) VA
     0,
     x'0000000000000000000000000000000000000000000000000000000000000000'
 );
+
+CREATE TABLE "found_my_certs" (
+    "log_id" INTEGER NOT NULL REFERENCES "ctlogs"("id"),
+    "x509_der" BLOB NOT NULL,
+    "ca_der" BLOB NOT NULL
+);
