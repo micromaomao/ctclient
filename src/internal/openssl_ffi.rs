@@ -197,10 +197,10 @@ pub fn sct_list_from_x509<R: AsRef<X509Ref>>(cert: &R) -> Result<Option<SctList>
   unsafe {
     let res = d2i_SCT_LIST(std::ptr::null_mut(), &mut pp as *mut _, i64::try_from(data.len()).unwrap());
     if res.is_null() {
-      return Err(crate::Error::BadCertificate(format!("{}", ErrorStack::get())));
+      return Err(crate::Error::BadSct(format!("{}", ErrorStack::get())));
     }
     if pp != data.as_ptr().add(data.len()) {
-      return Err(crate::Error::BadCertificate("SCT extension data not fully consumed.".to_owned()));
+      return Err(crate::Error::BadSct("SCT extension data not fully consumed.".to_owned()));
     }
     Ok(Some(SctList::from_ptr(res)))
   }

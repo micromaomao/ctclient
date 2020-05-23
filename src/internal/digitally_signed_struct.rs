@@ -60,7 +60,7 @@ pub fn verify_dss(dss: &[u8], pub_key: &PKey<openssl::pkey::Public>, data: &[u8]
 
 use crate::internal::openssl_ffi::SignatureAlgorithm;
 
-pub(crate) fn verify_dss_raw(signature_algorithm: SignatureAlgorithm, pub_key: &PKey<openssl::pkey::Public>, raw_signature: &[u8], data: &[u8]) -> Result<(), Error> {
+pub fn verify_dss_raw(signature_algorithm: SignatureAlgorithm, pub_key: &PKey<openssl::pkey::Public>, raw_signature: &[u8], data: &[u8]) -> Result<(), Error> {
   use SignatureAlgorithm::*;
   match signature_algorithm {
     Sha256Ecdsa => {

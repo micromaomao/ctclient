@@ -8,8 +8,8 @@
 //! All `pub_key` are in DER format, which is the format returned (in base64)
 //! by google's trusted log list. (No one told me this).
 //!
-//! This project is not a beginner tutorial on how a CT log works. Read [the
-//! RFC](https://tools.ietf.org/html/rfc6962) first.
+//! The source code of this project is not intended to be a beginner friendly tutorial on how a
+//! CT log works. To learn more about CT, you can read [the RFC](https://tools.ietf.org/html/rfc6962).
 
 // todo: gossiping
 
@@ -115,7 +115,7 @@ impl SthResult {
     !self.is_ok()
   }
 
-  /// Return the SignedTreeHead, if this is a Ok. Otherwise panic.
+  /// Return the [`SignedTreeHead`], if this is a Ok. Otherwise panic.
   pub fn unwrap(self) -> SignedTreeHead {
     match self {
       SthResult::Ok(sth) => sth,
@@ -125,7 +125,7 @@ impl SthResult {
     }
   }
 
-  /// Return the error, if this is a Err or ErrWithSth. Otherwise panic.
+  /// Return the [`Error`], if this is an `Err` or `ErrWithSth`. Otherwise panic.
   pub fn unwrap_err(self) -> Error {
     match self {
       SthResult::ErrWithSth(e, _) => e,
@@ -134,7 +134,7 @@ impl SthResult {
     }
   }
 
-  /// Return the SignedTreeHead, if this is a Ok or ErrWithSth. Otherwise panic.
+  /// Return the [`SignedTreeHead`], if this is a `Ok` or `ErrWithSth`. Otherwise panic.
   pub fn unwrap_tree_head(self) -> SignedTreeHead {
     match self {
       SthResult::Ok(sth) => sth,
@@ -185,9 +185,7 @@ impl fmt::Debug for CTClient {
 impl CTClient {
   /// Construct a new `CTClient` instance, and fetch the latest tree root.
   ///
-  /// Previous certificates in this log will not be checked. Useful for testing
-  /// but could result in missing some important stuff. Not recommended for
-  /// production. Use `from_bytes` and `as_bytes` to store state instead.
+  /// Previous certificates in this log will not be checked.
   ///
   /// # Errors
   ///
@@ -222,11 +220,7 @@ impl CTClient {
   /// Construct a new `CTClient` that will check all certificates included after
   /// the given tree state.
   ///
-  /// Previous certificates in this log before the provided tree hash will not be checked, so make sure to check
-  /// them manually (i.e. with crt.sh). For production,
-  /// `from_bytes` and `as_bytes` is recommended
-  /// to avoid duplicate work (e.g. checking those which has already been checked in
-  /// previous run).
+  /// Previous certificates in this log before the provided tree hash will not be checked.
   ///
   /// # Example
   ///
@@ -276,7 +270,7 @@ impl CTClient {
   ///
   /// This function should never panic, no matter what the server does to us.
   ///
-  /// Return the latest *Signed Tree Head* (STH) returned by the server, even if
+  /// Return the latest [`SignedTreeHead`] (STH) returned by the server, even if
   /// it is the same as last time, or if it rolled back (new tree_size < current tree_size).
   ///
   /// To log the behavior of CT logs, store the returned tree head and signature in some kind
@@ -467,7 +461,7 @@ impl CTClient {
     Ok(v)
   }
 
-  /// Parse a byte string returned by [`Self::as_bytes`].
+  /// Parse a byte string returned by [`Self::as_bytes`](CTClient::as_bytes).
   pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
     use std::convert::TryInto;
     fn e_inval() -> Result<CTClient, Error> {
