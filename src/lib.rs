@@ -23,11 +23,11 @@ use openssl::pkey::PKey;
 use openssl::x509::X509;
 
 use internal::new_http_client;
-pub use sct::{SignedCertificateTimestamp, SctEntry};
+pub use sct::{SctEntry, SignedCertificateTimestamp};
 pub use sth::SignedTreeHead;
 
 use crate::internal::check_inclusion_proof;
-use crate::internal::openssl_ffi::x509_clone;
+use crate::internal::openssl_ffi::{x509_clone, x509_make_a_looks_like_issued_by_b};
 
 mod sth;
 mod sct;
@@ -422,9 +422,26 @@ impl CTClient {
       let expected_tbs = x509_to_tbs(&cert_clone)
           .map_err(|e| Error::Unknown(format!("x509_to_tbs errored: {}", e)))?;
       if tbs != &expected_tbs {
-        return Err(Error::BadCertificate("TBS does not match pre-cert.".to_owned()));
+        // Maybe the precert is signed with an intermediate precert signing CA. The TBS will nevertheless contain the
+        // "true" CA as the issuer name.
+        // In that case, chain[1] is the precert signing CA, and chain[2] is the "true" signing CA.
+        let mut tbs_correct = false;
+        if chain.len() > 2 {
+          x509_make_a_looks_like_issued_by_b(&mut cert_clone, &chain[2]).map_err(|e|
+                Error::Unknown(format!("x509_make_a_looks_like_issued_by_b failed: {}", e)))?;
+          let new_expected_tbs = x509_to_tbs(&cert_clone)
+              .map_err(|e| Error::Unknown(format!("x509_to_tbs errored: {}", e)))?;
+          if tbs == &new_expected_tbs {
+            tbs_correct = true;
+          } else {
+            dbg!(&utils::u8_to_hex(&new_expected_tbs));
+            dbg!(&utils::u8_to_hex(&tbs));
+          }
+        }
+        if !tbs_correct {
+          return Err(Error::BadCertificate("TBS does not match pre-cert.".to_owned()));
+        }
       }
-      // todo: test this part.
     }
 
     if let Some(handler) = cert_handler {
