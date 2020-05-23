@@ -3,6 +3,8 @@ use openssl::x509::X509;
 use std::io::Write;
 
 fn main() {
+  env_logger::init();
+
   if std::env::args_os().len() != 1 {
     eprintln!("Expected no arguments.");
     std::process::exit(1);

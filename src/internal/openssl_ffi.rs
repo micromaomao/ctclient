@@ -5,7 +5,7 @@ use std::ptr::null_mut;
 
 use foreign_types::{ForeignType, ForeignTypeRef};
 use openssl::error::ErrorStack;
-use openssl::stack::Stack;
+use openssl::stack::{Stack, Stackable};
 use openssl::x509::X509Ref;
 use openssl_sys::ASN1_OBJECT;
 
@@ -61,6 +61,7 @@ pub mod foreign {
     pub fn SCT_get0_log_id(sct: *const SCT, log_id: *mut *mut ::std::os::raw::c_uchar) -> ::std::os::raw::c_ulong;
     pub fn SCT_get_timestamp(sct: *const SCT) -> u64;
     pub fn SCT_get0_extensions(sct: *const SCT, ext: *mut *mut ::std::os::raw::c_uchar) -> ::std::os::raw::c_ulong;
+    pub fn SCT_get_signature_nid(sct: *const SCT) -> ::std::os::raw::c_int;
     pub fn SCT_get0_signature(sct: *const SCT, sig: *mut *mut ::std::os::raw::c_uchar) -> ::std::os::raw::c_ulong;
     pub fn SCT_free(sct: *mut SCT);
   }
@@ -69,13 +70,18 @@ pub mod foreign {
 foreign_types::foreign_type! {
   type CType = foreign::SCT;
   fn drop = foreign::SCT_free;
+  /// An owned reference to a openssl `SCT` struct.
   pub struct Sct;
+  /// A reference to a openssl `SCT` struct.
   pub struct SctRef;
 }
 
-impl openssl::stack::Stackable for Sct {
+impl Stackable for Sct {
   type StackType = foreign::SCT_LIST;
 }
+
+/// An owned `STACK_OF(SCT)`.
+pub type SctList = Stack<Sct>;
 
 pub fn x509_clone<R: AsRef<X509Ref>>(src: &R) -> Result<openssl::x509::X509, ErrorStack> {
   unsafe {
@@ -178,7 +184,7 @@ pub fn x509_to_tbs<R: AsRef<X509Ref>>(cert: &R) -> Result<Vec<u8>, ErrorStack> {
   }
 }
 
-pub fn sct_list_from_x509<R: AsRef<X509Ref>>(cert: &R) -> Result<Option<Stack<Sct>>, crate::Error> {
+pub fn sct_list_from_x509<R: AsRef<X509Ref>>(cert: &R) -> Result<Option<SctList>, crate::Error> {
   let data = x509_get_sct_data(cert.as_ref()).map_err(|e| crate::Error::BadCertificate(format!("{}", e)))?;
   if data.is_none() {
     return Ok(None);
@@ -196,12 +202,18 @@ pub fn sct_list_from_x509<R: AsRef<X509Ref>>(cert: &R) -> Result<Option<Stack<Sc
     if pp != data.as_ptr().add(data.len()) {
       return Err(crate::Error::BadCertificate("SCT extension data not fully consumed.".to_owned()));
     }
-    Ok(Some(Stack::<Sct>::from_ptr(res)))
+    Ok(Some(SctList::from_ptr(res)))
   }
 }
 
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
 pub enum SCTVersion {
   V1
+}
+#[derive(Debug, Ord, PartialOrd, Eq, PartialEq, Copy, Clone)]
+pub enum SignatureAlgorithm {
+  Sha256Rsa,
+  Sha256Ecdsa
 }
 
 macro_rules! impl_get_data_fn {
@@ -235,6 +247,15 @@ impl SctRef {
 
   impl_get_data_fn!(extensions, SCT_get0_extensions);
 
-  impl_get_data_fn!(signature, SCT_get0_signature);
+  pub fn signature_algorithm(&self) -> Option<SignatureAlgorithm> {
+    let nid = unsafe { SCT_get_signature_nid(self.as_ptr()) };
+    match nid {
+      668 => Some(SignatureAlgorithm::Sha256Rsa),
+      794 => Some(SignatureAlgorithm::Sha256Ecdsa),
+      _ => None
+    }
+  }
+
+  impl_get_data_fn!(raw_signature, SCT_get0_signature);
 }
 

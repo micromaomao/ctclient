@@ -5,10 +5,11 @@ use openssl::x509::X509;
 
 use ctclient::CTClient;
 use ctclient::google_log_list::LogList;
-use ctclient::internal::{check_inclusion_proof, construct_precert_leaf_hash, parse_certificate_sct_list, SctEntry};
 use ctclient::utils::u8_to_hex;
 
 fn main() {
+  env_logger::init();
+
   let args: Vec<_> = std::env::args_os().collect();
   if args.len() != 2 {
     eprintln!("Expected 1 argument: chain.pem");
@@ -20,7 +21,7 @@ fn main() {
     eprintln!("Expected at least 2 certs.");
     exit(1);
   }
-  let sct_list = ctclient::internal::SignedCertificateTimestamp::from_certificate_with_sct_extension(chain[0].as_ref(), chain[1].as_ref()).expect("Unable to parse sct list");
+  let sct_list = ctclient::internal::SignedCertificateTimestamp::from_cert_sct_extension(chain[0].as_ref(), chain[1].as_ref()).expect("Unable to parse sct list");
   if sct_list.is_empty() {
     println!("Did not found any SCTs in the certificate.");
     exit(0);
@@ -33,27 +34,21 @@ fn main() {
     let timestamp = sct.timestamp;
     let time = SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(timestamp)).unwrap();
     println!("  timestamp = {} ({} days ago)", timestamp, (time.elapsed().unwrap().as_secs_f32() / 60f32 / 60f32 / 24f32).round());
-    let leaf_hash = match &sct.entry {
-      SctEntry::PreCert { tbs, issuer_key_hash } => {
-        construct_precert_leaf_hash(&tbs[..], &issuer_key_hash[..], sct.timestamp, &sct.extensions_data)
-      }
-      _ => unimplemented!()
-    };
+    let leaf_hash = sct.derive_leaf_hash();
     println!("  calculated leaf hash: {}", u8_to_hex(&leaf_hash));
     let log = ll.find_by_id(&sct.log_id);
     if let Some(log) = log {
       println!("  log is {}", log.base_url);
+      if let Err(e) = sct.verify(&openssl::pkey::PKey::public_key_from_der(&log.pub_key).unwrap()) {
+        println!("  Error: unable to verify SCT signature: {}", e);
+      }
       let lc = CTClient::new_from_latest_th(&log.base_url, &log.pub_key);
       if lc.is_err() {
         println!("    unable to connect to log: {}", lc.unwrap_err());
         continue;
       }
       let lc = lc.unwrap();
-      let th = lc.get_checked_tree_head();
-      match check_inclusion_proof(
-        lc.get_reqwest_client(),
-        &reqwest::Url::parse(&log.base_url).expect("Invalid log url returned by google."),
-        th.0, &th.1, &leaf_hash) {
+      match lc.check_inclusion_proof_for_sct(&sct) {
         Ok(index) => {
           println!("    inclusion proof checked, leaf index is {}", index);
         }

@@ -1,3 +1,5 @@
+//! Verious utilities for checking the content of a certificate.
+
 use openssl::x509::X509Ref;
 use crate::Error;
 

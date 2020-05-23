@@ -58,6 +58,9 @@ fn test_inclusion_proof_parts() {
   assert_eq!(inclusion_proof_parts(5, 4), vec![0..4]);
 }
 
+/// Fetch the required inclusion proof from the server and see if it convinces us that `leaf_hash` is
+/// in the tree with hash `tree_hash` and size `tree_size`. On success, return the index number of the
+/// leaf corresponding with the hash.
 pub fn check_inclusion_proof(client: &reqwest::blocking::Client, base_url: &reqwest::Url, tree_size: u64, tree_hash: &[u8; 32], leaf_hash: &[u8; 32]) -> Result<u64, Error> {
   let json: AuditProof = get_json(client, base_url,
       &format!("ct/v1/get-proof-by-hash?{}", serde_urlencoded::to_string(&[
@@ -91,6 +94,9 @@ pub fn check_inclusion_proof(client: &reqwest::blocking::Client, base_url: &reqw
   Ok(leaf_index)
 }
 
+/// Attempt to derive the root hash from the server provided inclusion proof and our calculated proof_parts.
+///
+/// Used by [`check_inclusion_proof`].
 pub fn hash_inclusion_proof(proof_parts: &[Range<u64>], provided_proof: &[[u8; 32]], leaf_hash: &[u8; 32], leaf_index: u64) -> [u8; 32] {
   let mut current_hash = *leaf_hash;
   let mut current_subtree = leaf_index..leaf_index + 1;

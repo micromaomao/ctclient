@@ -26,6 +26,7 @@ use internal::new_http_client;
 pub use sth::SignedTreeHead;
 
 use crate::internal::openssl_ffi::x509_clone;
+use crate::internal::{SignedCertificateTimestamp, check_inclusion_proof};
 
 mod sth;
 
@@ -70,8 +71,13 @@ pub enum Error {
 
   /// Server returned an invalid inclusion proof.
   InvalidInclusionProof { tree_size: u64, leaf_index: u64, desc: String },
+
+  /// A malformed SCT is given.
+  BadSct(String),
 }
 
+/// Either a fetched and checked [`SignedTreeHead`], or a [`SignedTreeHead`] that has a valid signature
+/// but did not pass some internal checks, or just an [`Error`].
 #[derive(Debug)]
 pub enum SthResult {
   /// Got the new tree head.
@@ -151,7 +157,8 @@ impl fmt::Display for Error {
       Error::InvalidConsistencyProof {prev_size, new_size, desc} => write!(f, "Server provided an invalid consistency proof from {} to {}: {}", prev_size, new_size, &desc),
       Error::CannotVerifyTreeData(desc) => write!(f, "The certificates returned by the server is inconsistent with the previously provided consistency proof: {}", &desc),
       Error::BadCertificate(desc) => write!(f, "The certificate returned by the server has a problem: {}", &desc),
-      Error::InvalidInclusionProof {tree_size, leaf_index, desc} => write!(f, "Server provided an invalid inclusion proof of {} in tree with size {}: {}", leaf_index, tree_size, desc)
+      Error::InvalidInclusionProof {tree_size, leaf_index, desc} => write!(f, "Server provided an invalid inclusion proof of {} in tree with size {}: {}", leaf_index, tree_size, desc),
+      Error::BadSct(desc) => write!(f, "The SCT received is invalid: {}", desc),
     }
   }
 }
@@ -424,22 +431,19 @@ impl CTClient {
       // todo: test this part.
     }
 
-    debug_assert!({
-      let calculated_leaf_hash = if leaf.is_pre_cert {
-        internal::construct_precert_leaf_hash(leaf.tbs_cert.as_ref().map(|x| &x[..]).unwrap(), {
-          &utils::sha256(&chain[1].public_key().unwrap().public_key_to_der().unwrap())
-        }, leaf.timestamp, &leaf.extensions)
-      } else {
-        internal::construct_x509_leaf_hash(&chain[0].to_der().unwrap(), leaf.timestamp, &leaf.extensions)
-      };
-      assert_eq!(calculated_leaf_hash, leaf.hash);
-      true
-    });
-
     if let Some(handler) = cert_handler {
       handler(&chain);
     }
     Ok(())
+  }
+
+  /// Given a [`SignedCertificateTimestamp`], check that the CT log monitored by this client can provide
+  /// an inclusion proof that backs the sct, and return the leaf index.
+  ///
+  /// Does not check the signature on the sct, and also does not check that the maximum merge delay has passed.
+  pub fn check_inclusion_proof_for_sct(&self, sct: &SignedCertificateTimestamp) -> Result<u64, Error> {
+    let th = self.get_checked_tree_head();
+    check_inclusion_proof(self.get_reqwest_client(), &self.base_url, th.0, &th.1, &sct.derive_leaf_hash())
   }
 
   /// Serialize the state of this client into bytes

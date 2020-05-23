@@ -4,6 +4,11 @@ use openssl::pkey::PKey;
 use crate::Error;
 use crate::utils;
 
+// https://docs.rs/rustls/0.15.2/src/rustls/msgs/enums.rs.html#720
+// We only need to handle these two cases because RFC says so.
+pub(crate) const SIGSCHEME_ECDSA_NISTP256_SHA256: u16 = 0x0403;
+pub(crate) const SIGSCHEME_RSA_PKCS1_SHA256: u16 = 0x0401;
+
 /// Verifies a TLS digitally-signed struct (see [the TLS
 /// RFC](https://tools.ietf.org/html/rfc5246#section-4.7) for more info.)
 ///
@@ -42,36 +47,47 @@ pub fn verify_dss(dss: &[u8], pub_key: &PKey<openssl::pkey::Public>, data: &[u8]
     return Err(Error::InvalidSignature(format!("Invalid dss: {}\n  It says there that there are {} bytes in the signature part, but I see {}.", &utils::u8_to_hex(dss), length, rest.len())));
   }
 
-  // https://docs.rs/rustls/0.15.2/src/rustls/msgs/enums.rs.html#720
-  // We only need to handle these two cases because RFC says so.
-  const SIGSCHEME_ECDSA_NISTP256_SHA256: u16 = 0x0403;
-  const SIGSCHEME_RSA_PKCS1_SHA256: u16 = 0x0401;
-  match sig_type {
-    SIGSCHEME_ECDSA_NISTP256_SHA256 => {
+  let signature_algorithm = match sig_type {
+    SIGSCHEME_ECDSA_NISTP256_SHA256 => SignatureAlgorithm::Sha256Ecdsa,
+    SIGSCHEME_RSA_PKCS1_SHA256 => SignatureAlgorithm::Sha256Rsa,
+    _ => {
+      return Err(Error::InvalidSignature(format!("Unknow signature scheme {:2x}", sig_type)));
+    }
+  };
+
+  verify_dss_raw(signature_algorithm, pub_key, rest, data)
+}
+
+use crate::internal::openssl_ffi::SignatureAlgorithm;
+
+pub(crate) fn verify_dss_raw(signature_algorithm: SignatureAlgorithm, pub_key: &PKey<openssl::pkey::Public>, raw_signature: &[u8], data: &[u8]) -> Result<(), Error> {
+  use SignatureAlgorithm::*;
+  match signature_algorithm {
+    Sha256Ecdsa => {
       if pub_key.id() != openssl::pkey::Id::EC {
         return Err(Error::InvalidSignature(format!("dss says signature is EC, but key is {:?}", pub_key.id())));
       }
     }
-    SIGSCHEME_RSA_PKCS1_SHA256 => {
+    Sha256Rsa => {
       if pub_key.id() != openssl::pkey::Id::RSA {
         return Err(Error::InvalidSignature(format!("dss says signature is RSA, but key is {:?}", pub_key.id())));
       }
     }
-    _ => {
-      return Err(Error::InvalidSignature(format!("Unknow signature scheme {:2x}", sig_type)));
-    }
   }
 
   let mut verifier = openssl::sign::Verifier::new(openssl::hash::MessageDigest::sha256(), pub_key).map_err(|e| Error::Unknown(format!("EVP_DigestVerifyInit: {}", &e)))?;
-  if sig_type == SIGSCHEME_RSA_PKCS1_SHA256 {
+  if signature_algorithm == Sha256Rsa {
     verifier.set_rsa_padding(openssl::rsa::Padding::PKCS1).map_err(|e| Error::Unknown(format!("EVP_PKEY_CTX_set_rsa_padding: {}", &e)))?;
   }
   verifier.update(data).map_err(|e| Error::Unknown(format!("EVP_DigestUpdate: {}", &e)))?;
-  if !verifier.verify(rest).map_err(|e| Error::InvalidSignature(format!("EVP_DigestVerifyFinal: {}", &e)))? {
-    return Err(Error::InvalidSignature(format!("Signature is invalid: signature = {}, data = {}.", &utils::u8_to_hex(rest), &utils::u8_to_hex(data))));
+  if !verifier.verify(raw_signature).map_err(|e| Error::InvalidSignature(format!("EVP_DigestVerifyFinal: {}", &e)))? {
+    return Err(Error::InvalidSignature(format!("Signature is invalid: signature = {}, data = {}.", &utils::u8_to_hex(raw_signature), &utils::u8_to_hex(data))));
   }
 
-  trace!("Signature checked for data {} - signature is {}", &utils::u8_to_hex(data), &utils::u8_to_hex(dss));
+  debug_assert!({
+    trace!("Signature checked for data {}", &utils::u8_to_hex(data));
+    true
+  });
 
   Ok(())
 }

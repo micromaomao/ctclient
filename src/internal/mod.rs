@@ -24,7 +24,7 @@ pub mod openssl_ffi;
 mod inclusion;
 mod sct;
 
-/// Construct a new [reqwest::Client](reqwest::Client) to be used with the
+/// Construct a new [`reqwest::Client`] to be used with the
 /// functions in this module. You don't necessary need to use this.
 ///
 /// The client constructed will not store cookie or follow redirect.

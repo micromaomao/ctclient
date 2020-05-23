@@ -7,17 +7,15 @@ use crate::jsons;
 use crate::utils::{combine_tree_hash, largest_power_of_2_smaller_than, u8_to_hex};
 
 /// Function used by
-/// [`verify_consistency_proof`](crate::internal::verify_consistency_proof) to
-/// construct a consistency proof client side (which is used to check against the
-/// server proof)
+/// [`verify_consistency_proof`] to construct a consistency proof client side
+/// (which is used to check against the server proof)
 ///
 /// Returns an array of (u64, u64)s. Each (x: u64, y: u64) denotes that this part
 /// of the proof should be the hash of the subtree formed by leafs with number [x, y).
 ///
 /// This function is only useful to those who want to do some custom proof
 /// handling. You should probably use
-/// [`verify_consistency_proof`](crate::internal::verify_consistency_proof)
-/// instead.
+/// [`verify_consistency_proof`] instead.
 ///
 /// Will not omit the first component even if it's the same as `prev_tree_hash`
 /// (the server will). This means that the subtree represented by ret\[0] will always be
@@ -86,7 +84,7 @@ pub struct ConsistencyProofPart {
 /// checking for you.
 ///
 /// To fetch the consistency proof from the server and verifies it, call
-/// [`check_consistency_proof`](crate::internal::check_consistency_proof).
+/// [`check_consistency_proof`].
 ///
 /// # `Ok(Vec<ConsistencyProofPart>)`
 ///
@@ -96,7 +94,7 @@ pub struct ConsistencyProofPart {
 /// new tree.
 ///
 /// To do this, calculate the leaf hash of all the new certificates, and call
-/// `ConsistencyProofPart::verify` with the array of leaf hashes. See its
+/// [`ConsistencyProofPart::verify`] with the array of leaf hashes. See its
 /// documentation for more info.
 ///
 /// # Panic

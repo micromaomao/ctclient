@@ -205,43 +205,6 @@ impl Leaf {
   }
 }
 
-pub fn construct_x509_leaf_hash(x509_endcert: &[u8], timestamp: u64, extensions_data: &[u8]) -> [u8; 32] {
-  let mut hash_data: Vec<u8> = Vec::new();
-  hash_data.push(0); // hash type = leaf data
-  // Merkle tree leaf_input:
-  hash_data.push(0); // version = 0
-  hash_data.push(0); // leaf type = 0
-  hash_data.extend_from_slice(&timestamp.to_be_bytes()); // timestamp
-  hash_data.extend_from_slice(&0u16.to_be_bytes()); // entry type = x509_entry
-  // all there is left is just chain[0].
-  assert!(x509_endcert.len() < 1<<24);
-  hash_data.extend_from_slice(&(x509_endcert.len() as u32).to_be_bytes()[1..4]); // len of x509
-  hash_data.extend_from_slice(&x509_endcert); // x509 data
-  assert!(extensions_data.len() < 1<<16);
-  hash_data.extend_from_slice(&(extensions_data.len() as u16).to_be_bytes()); // len of extensions
-  hash_data.extend_from_slice(&extensions_data); // extensions
-  utils::sha256(&hash_data)
-}
-
-pub fn construct_precert_leaf_hash(tbs: &[u8], issuer_key_hash: &[u8], timestamp: u64, extensions_data: &[u8]) -> [u8; 32] {
-  assert_eq!(issuer_key_hash.len(), 32);
-  let mut hash_data: Vec<u8> = Vec::new();
-  hash_data.push(0); // hash type = leaf data
-  // Merkle tree leaf_input:
-  hash_data.push(0); // version = 0
-  hash_data.push(0); // leaf type = 0
-  hash_data.extend_from_slice(&timestamp.to_be_bytes()); // timestamp
-  hash_data.extend_from_slice(&1u16.to_be_bytes()); // entry type = precert_entry
-  hash_data.extend_from_slice(issuer_key_hash); // issuer_key_hash
-  assert!(tbs.len() < 1<<24);
-  hash_data.extend_from_slice(&(tbs.len() as u32).to_be_bytes()[1..4]); // len of tbs
-  hash_data.extend_from_slice(tbs); // tbs
-  assert!(extensions_data.len() < 1<<16);
-  hash_data.extend_from_slice(&(extensions_data.len() as u16).to_be_bytes()); // len of extensions
-  hash_data.extend_from_slice(&extensions_data); // extensions
-  utils::sha256(&hash_data)
-}
-
 impl TryFrom<&jsons::LeafEntry> for Leaf {
   type Error = Error;
   fn try_from(le: &jsons::LeafEntry) -> Result<Self, Error> {
