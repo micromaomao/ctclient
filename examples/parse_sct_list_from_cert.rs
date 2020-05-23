@@ -21,7 +21,7 @@ fn main() {
     eprintln!("Expected at least 2 certs.");
     exit(1);
   }
-  let sct_list = ctclient::internal::SignedCertificateTimestamp::from_cert_sct_extension(chain[0].as_ref(), chain[1].as_ref()).expect("Unable to parse sct list");
+  let sct_list = ctclient::SignedCertificateTimestamp::from_cert_sct_extension(chain[0].as_ref(), chain[1].as_ref()).expect("Unable to parse sct list");
   if sct_list.is_empty() {
     println!("Did not found any SCTs in the certificate.");
     exit(0);

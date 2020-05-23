@@ -2,7 +2,7 @@ use openssl::pkey::PKey;
 
 use crate::{Error, internal};
 
-/// A unverified *signed tree head* (STH), as returned from the server. This encapsulate the state of the tree at
+/// An unverified *signed tree head* (STH), as returned from the server. This encapsulate the state of the tree at
 /// some point in time.
 ///
 /// This struct stores the signature but does not store the public key or log id.

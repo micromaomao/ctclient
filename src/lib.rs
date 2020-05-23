@@ -23,12 +23,14 @@ use openssl::pkey::PKey;
 use openssl::x509::X509;
 
 use internal::new_http_client;
+pub use sct::{SignedCertificateTimestamp, SctEntry};
 pub use sth::SignedTreeHead;
 
+use crate::internal::check_inclusion_proof;
 use crate::internal::openssl_ffi::x509_clone;
-use crate::internal::{SignedCertificateTimestamp, check_inclusion_proof};
 
 mod sth;
+mod sct;
 
 pub mod utils;
 pub mod jsons;

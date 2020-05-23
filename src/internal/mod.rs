@@ -12,8 +12,6 @@ pub use digitally_signed_struct::*;
 pub use get_entries::*;
 pub use inclusion::*;
 pub use leaf::*;
-pub use sct::*;
-
 use crate::{Error, jsons, SignedTreeHead, utils};
 
 mod consistency;
@@ -22,7 +20,6 @@ mod leaf;
 mod digitally_signed_struct;
 pub mod openssl_ffi;
 mod inclusion;
-mod sct;
 
 /// Construct a new [`reqwest::Client`] to be used with the
 /// functions in this module. You don't necessary need to use this.
