@@ -33,6 +33,7 @@ pub mod utils;
 pub mod jsons;
 pub mod internal;
 pub mod certutils;
+pub mod google_log_list;
 
 /// Errors that this library could produce.
 #[derive(Debug)]

@@ -3,7 +3,9 @@ use std::time::{Duration, SystemTime};
 
 use openssl::x509::X509;
 
-use ctclient::internal::{construct_precert_leaf_hash, parse_certificate_sct_list, SCTInner};
+use ctclient::CTClient;
+use ctclient::google_log_list::LogList;
+use ctclient::internal::{check_inclusion_proof, construct_precert_leaf_hash, parse_certificate_sct_list, SCTInner};
 use ctclient::utils::u8_to_hex;
 
 fn main() {
@@ -23,6 +25,7 @@ fn main() {
     println!("Did not found any SCTs in the certificate.");
     exit(0);
   }
+  let ll = LogList::get().expect("Unable to fetch log list from Google.");
   for (i, sct) in sct_list.iter().enumerate() {
     println!("SCT {}:", i + 1);
     let log_id_b64 = base64::encode(&sct.log_id);
@@ -31,11 +34,36 @@ fn main() {
     let time = SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(timestamp)).unwrap();
     println!("  timestamp = {} ({} days ago)", timestamp, (time.elapsed().unwrap().as_secs_f32() / 60f32 / 60f32 / 24f32).round());
     let leaf_hash = match &sct.entry {
-      SCTInner::PreCert {tbs, issuer_key_hash} => {
+      SCTInner::PreCert { tbs, issuer_key_hash } => {
         construct_precert_leaf_hash(&tbs[..], &issuer_key_hash[..], sct.timestamp, &sct.extensions_data)
-      },
+      }
       _ => unimplemented!()
     };
     println!("  calculated leaf hash: {}", u8_to_hex(&leaf_hash));
+    let log = ll.find_by_id(&sct.log_id);
+    if let Some(log) = log {
+      println!("  log is {}", log.base_url);
+      let lc = CTClient::new_from_latest_th(&log.base_url, &log.pub_key);
+      if lc.is_err() {
+        println!("    unable to connect to log: {}", lc.unwrap_err());
+        continue;
+      }
+      let lc = lc.unwrap();
+      let th = lc.get_checked_tree_head();
+      match check_inclusion_proof(
+        lc.get_reqwest_client(),
+        &reqwest::Url::parse(&log.base_url).expect("Invalid log url returned by google."),
+        th.0, &th.1, &leaf_hash) {
+        Ok(index) => {
+          println!("    inclusion proof checked, leaf index is {}", index);
+        }
+        Err(e) => {
+          println!("    inclusion proof errored: {}", e);
+        }
+      }
+    } else {
+      println!("  log is not known.");
+    }
+    // todo: move the inclusion proof check code into CTClient?
   }
 }
