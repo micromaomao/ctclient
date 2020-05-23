@@ -292,7 +292,7 @@ impl CTClient {
     match new_tree_size.cmp(&self.latest_size) {
       Ordering::Equal => {
         if new_tree_root == self.latest_tree_hash {
-          info!("CTClient: {} remained the same.", self.base_url.as_str());
+          info!("{} remained the same.", self.base_url.as_str());
           SthResult::Ok(sth)
         } else {
           SthResult::ErrWithSth(
@@ -364,7 +364,7 @@ impl CTClient {
               }
             }
             if delaycheck.elapsed() > std::time::Duration::from_secs(1) {
-              info!("Catching up: {} / {} ({}%)", i, new_tree_size, ((i - i_start) * 1000 / (new_tree_size - i_start)) as f32 / 10f32);
+              info!("{}: Catching up: {} / {} ({}%)", self.base_url.as_str(), i, new_tree_size, ((i - i_start) * 1000 / (new_tree_size - i_start)) as f32 / 10f32);
               delaycheck = std::time::Instant::now();
             }
           }
@@ -376,9 +376,9 @@ impl CTClient {
               return SthResult::ErrWithSth(Error::CannotVerifyTreeData(e), sth);
             }
           }
-          info!("CTClient: {} updated to {} {} (read {} leaves)", self.base_url.as_str(), new_tree_size, &utils::u8_to_hex(&new_tree_root), new_tree_size - i_start);
+          info!("{} updated to {} {} (read {} leaves)", self.base_url.as_str(), new_tree_size, &utils::u8_to_hex(&new_tree_root), new_tree_size - i_start);
         } else {
-          info!("CTClient: {} light updated to {} {}", self.base_url.as_str(), new_tree_size, &utils::u8_to_hex(&new_tree_root));
+          info!("{} light updated to {} {}", self.base_url.as_str(), new_tree_size, &utils::u8_to_hex(&new_tree_root));
         }
 
         self.latest_size = new_tree_size;
@@ -433,9 +433,6 @@ impl CTClient {
               .map_err(|e| Error::Unknown(format!("x509_to_tbs errored: {}", e)))?;
           if tbs == &new_expected_tbs {
             tbs_correct = true;
-          } else {
-            dbg!(&utils::u8_to_hex(&new_expected_tbs));
-            dbg!(&utils::u8_to_hex(&tbs));
           }
         }
         if !tbs_correct {

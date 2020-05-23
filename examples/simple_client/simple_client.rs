@@ -1,13 +1,15 @@
-use ctclient::CTClient;
-use log::{info, LevelFilter};
-use ctclient::utils;
+use std::convert::{TryFrom, TryInto};
 use std::env;
 use std::process::exit;
-use rusqlite::{Connection, OptionalExtension, NO_PARAMS};
-use std::convert::{TryInto, TryFrom};
-use rusqlite::types::Value;
+
+use log::LevelFilter;
 use openssl::x509::X509;
+use rusqlite::{Connection, NO_PARAMS, OptionalExtension};
+use rusqlite::types::Value;
+
 use ctclient::certutils::get_dns_names;
+use ctclient::CTClient;
+use ctclient::utils;
 
 fn main () {
   env_logger::builder().filter_module(env!("CARGO_PKG_NAME"), LevelFilter::Info).init();
@@ -72,10 +74,8 @@ fn main () {
       let th = sthresult.tree_head().unwrap();
       let new_thash = th.root_hash;
       if new_thash == last_thash {
-        info!("Stayed the same.");
         std::thread::sleep(std::time::Duration::from_secs(10));
       } else {
-        info!("Updated to {} {}", th.tree_size, &utils::u8_to_hex(&th.root_hash));
         last_thash = new_thash;
         save_db.execute(r#"UPDATE ctlogs SET checked_tree_size = ?, checked_tree_head = ? WHERE url = ?"#, &[
           Value::Integer(th.tree_size.try_into().unwrap()), Value::Blob(th.root_hash.to_vec()),
