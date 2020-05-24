@@ -7,6 +7,7 @@ version = "0.4.1"
 authors = ["Mao Wtm <m@maowtm.org>"]
 edition = "2018"
 documentation = "https://docs.rs/ctclient"
+readme = "README.md"
 
 [[example]]
 name = "simple_client"
