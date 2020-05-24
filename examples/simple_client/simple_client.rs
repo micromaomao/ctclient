@@ -9,8 +9,6 @@ use rusqlite::types::Value;
 
 use ctclient::certutils::get_dns_names;
 use ctclient::CTClient;
-use std::time::{SystemTime, Duration};
-use std::ops::Sub;
 
 fn main () {
   env_logger::builder().filter_module("ctclient", LevelFilter::Info).init();

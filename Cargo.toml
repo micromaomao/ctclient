@@ -1,9 +1,9 @@
 [package]
 name = "ctclient"
-description = "Certificate Transparency Log client for monitoring and gossiping"
+description = "Certificate Transparency Log client suitable for monitoring, quick SCT validation, gossiping, etc."
 license = "MIT"
 repository = "https://github.com/micromaomao/ctclient"
-version = "0.4.0"
+version = "0.4.1"
 authors = ["Mao Wtm <m@maowtm.org>"]
 edition = "2018"
 documentation = "https://docs.rs/ctclient"
