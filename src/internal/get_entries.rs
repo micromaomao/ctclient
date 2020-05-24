@@ -15,7 +15,7 @@ pub struct GetEntriesIter<'a> {
   done: bool,
   last_gotten_entries: (Range<u64>, Vec<Option<jsons::LeafEntry>>),
   next_index: u64,
-  batch_size: u64,
+  pub batch_size: u64,
 
   client: &'a reqwest::blocking::Client,
   base_url: &'a reqwest::Url,
@@ -23,7 +23,7 @@ pub struct GetEntriesIter<'a> {
 
 impl<'a> GetEntriesIter<'a> {
   fn new(range: std::ops::Range<u64>, client: &'a reqwest::blocking::Client, base_url: &'a reqwest::Url) -> Self {
-    Self{
+    Self {
       last_gotten_entries: (range.start..range.start, Vec::new()),
       next_index: range.start,
       requested_range: range,

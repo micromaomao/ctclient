@@ -62,11 +62,25 @@ fn test_inclusion_proof_parts() {
 /// in the tree with hash `tree_hash` and size `tree_size`. On success, return the index number of the
 /// leaf corresponding with the hash.
 pub fn check_inclusion_proof(client: &reqwest::blocking::Client, base_url: &reqwest::Url, tree_size: u64, tree_hash: &[u8; 32], leaf_hash: &[u8; 32]) -> Result<u64, Error> {
+  let res = fetch_inclusion_proof(client, base_url, tree_size, leaf_hash)?;
+  if &res.calculated_tree_hash != tree_hash {
+    return Err(Error::InvalidInclusionProof {tree_size, leaf_index: res.leaf_index, desc:
+    format!("Expected the proof to yield a tree hash of {}, but instead got {}.", u8_to_hex(tree_hash), u8_to_hex(&res.calculated_tree_hash))});
+  }
+  Ok(res.leaf_index)
+}
+
+pub struct FetchInclusionProofResult {
+  pub calculated_tree_hash: [u8; 32],
+  pub leaf_index: u64
+}
+
+pub fn fetch_inclusion_proof(client: &reqwest::blocking::Client, base_url: &reqwest::Url, tree_size: u64, leaf_hash: &[u8; 32]) -> Result<FetchInclusionProofResult, Error> {
   let json: AuditProof = get_json(client, base_url,
-      &format!("ct/v1/get-proof-by-hash?{}", serde_urlencoded::to_string(&[
-        ("hash", base64::encode(leaf_hash)),
-        ("tree_size", tree_size.to_string())
-      ]).map_err(|e| Error::Unknown(format!("{}", e)))?)
+                                  &format!("ct/v1/get-proof-by-hash?{}", serde_urlencoded::to_string(&[
+                                    ("hash", base64::encode(leaf_hash)),
+                                    ("tree_size", tree_size.to_string())
+                                  ]).map_err(|e| Error::Unknown(format!("{}", e)))?)
   )?;
   let leaf_index = json.leaf_index;
   if json.leaf_index >= tree_size {
@@ -87,11 +101,10 @@ pub fn check_inclusion_proof(client: &reqwest::blocking::Client, base_url: &reqw
     provided_proof.push(hash[..].try_into().unwrap());
   }
   let got_hash = hash_inclusion_proof(&proof_parts, &provided_proof, leaf_hash, leaf_index);
-  if &got_hash != tree_hash {
-    return Err(Error::InvalidInclusionProof {tree_size, leaf_index, desc:
-            format!("Expected the proof to yield a tree hash of {}, but instead got {}.", u8_to_hex(tree_hash), u8_to_hex(&got_hash))});
-  }
-  Ok(leaf_index)
+  Ok(FetchInclusionProofResult{
+    calculated_tree_hash: got_hash,
+    leaf_index
+  })
 }
 
 /// Attempt to derive the root hash from the server provided inclusion proof and our calculated proof_parts.

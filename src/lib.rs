@@ -26,7 +26,7 @@ use internal::new_http_client;
 pub use sct::{SctEntry, SignedCertificateTimestamp};
 pub use sth::SignedTreeHead;
 
-use crate::internal::check_inclusion_proof;
+use crate::internal::{check_inclusion_proof, Leaf, fetch_inclusion_proof, check_consistency_proof};
 use crate::internal::openssl_ffi::{x509_clone, x509_make_a_looks_like_issued_by_b};
 
 mod sth;
@@ -76,6 +76,9 @@ pub enum Error {
 
   /// A malformed SCT is given.
   BadSct(String),
+
+  /// We asked for a certain entry expecting it to be there, but the server gave us nothing.
+  ExpectedEntry(u64),
 }
 
 /// Either a fetched and checked [`SignedTreeHead`], or a [`SignedTreeHead`] that has a valid signature
@@ -161,6 +164,7 @@ impl fmt::Display for Error {
       Error::BadCertificate(desc) => write!(f, "The certificate returned by the server has a problem: {}", &desc),
       Error::InvalidInclusionProof {tree_size, leaf_index, desc} => write!(f, "Server provided an invalid inclusion proof of {} in tree with size {}: {}", leaf_index, tree_size, desc),
       Error::BadSct(desc) => write!(f, "The SCT received is invalid: {}", desc),
+      Error::ExpectedEntry(leaf_index) => write!(f, "The server did not return the leaf with index {}, even though we believe it should be there.", leaf_index),
     }
   }
 }
@@ -360,7 +364,7 @@ impl CTClient {
                 );
               },
               None => {
-                return SthResult::ErrWithSth(Error::CannotVerifyTreeData("GetEntries ended, but there's still more to get.".to_owned()), sth);
+                return SthResult::ErrWithSth(Error::ExpectedEntry(i), sth);
               }
             }
             if delaycheck.elapsed() > std::time::Duration::from_secs(1) {
@@ -454,6 +458,69 @@ impl CTClient {
   pub fn check_inclusion_proof_for_sct(&self, sct: &SignedCertificateTimestamp) -> Result<u64, Error> {
     let th = self.get_checked_tree_head();
     check_inclusion_proof(self.get_reqwest_client(), &self.base_url, th.0, &th.1, &sct.derive_leaf_hash())
+  }
+
+  pub fn first_leaf_after(&self, timestamp: u64) -> Result<Option<(u64, Leaf)>, Error> {
+    let mut low = 0u64;
+    let mut high = self.latest_size;
+    let mut last_leaf: Option<(u64, Leaf)> = None;
+    while low < high {
+      let mid = (low + high) / 2;
+      let mut entries_iter = internal::get_entries(&self.http_client, &self.base_url, mid..mid + 1);
+      entries_iter.batch_size = 1;
+      match entries_iter.next() {
+        None => return Err(Error::ExpectedEntry(mid)),
+        Some(Err(e)) => return Err(e),
+        Some(Ok(got_entry)) => {
+          let got_timestamp = got_entry.timestamp;
+          use std::cmp::Ordering::*;
+          match got_timestamp.cmp(&timestamp) {
+            Equal => return Ok(Some((mid, got_entry))),
+            Less => {
+              low = mid + 1;
+            },
+            Greater => {
+              last_leaf = Some((mid, got_entry));
+              high = mid;
+            }
+          }
+        }
+      }
+    }
+    if low >= self.latest_size || last_leaf.is_none() {
+      Ok(None)
+    } else {
+      Ok(Some(last_leaf.unwrap()))
+    }
+  }
+
+  pub fn first_tree_head_after(&self, timestamp: u64) -> Result<Option<(u64, [u8; 32])>, Error> {
+    let fla = self.first_leaf_after(timestamp)?;
+    if fla.is_none() {
+      return Ok(None);
+    }
+    let fla = fla.unwrap();
+    let tsize = fla.0 + 1;
+    let inclusion_res = fetch_inclusion_proof(&self.http_client, &self.base_url, tsize, &fla.1.hash)?;
+    if inclusion_res.leaf_index != fla.0 {
+      return Err(Error::Unknown("inclusion result.leaf_index != expected".to_owned()));
+    }
+    Ok(Some((tsize, inclusion_res.calculated_tree_hash)))
+  }
+
+  pub fn rollback_to_timestamp(&mut self, timestamp: u64) -> Result<(), Error> {
+    let res = self.first_tree_head_after(timestamp)?;
+    if res.is_none() {
+      return Ok(());
+    }
+    let (tsize, thash) = res.unwrap();
+    if tsize < self.latest_size {
+      check_consistency_proof(&self.http_client, &self.base_url, tsize, self.latest_size, &thash, &self.latest_tree_hash)?;
+      self.latest_size = tsize;
+      self.latest_tree_hash = thash;
+      info!("{}: Rolled back to {} {}", self.base_url.as_str(), tsize, utils::u8_to_hex(&thash));
+    }
+    Ok(())
   }
 
   /// Serialize the state of this client into bytes
