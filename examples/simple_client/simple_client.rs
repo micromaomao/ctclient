@@ -39,12 +39,6 @@ fn main () {
     CTClient::new_from_perv_tree_hash(&url, &pub_key, init_tree_hash[..].try_into().unwrap(), init_tree_size).unwrap()
   };
   let mut last_thash: [u8; 32] = init_tree_hash[..].try_into().unwrap();
-  client.light_update().unwrap();
-  client.rollback_to_timestamp(
-    SystemTime::now().sub(Duration::from_secs(60*10))
-        .duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis() as u64
-  ).unwrap();
-  last_thash = client.get_checked_tree_head().1;
   loop {
     let sthresult = client.update(Some(|certs: &[X509]| {
       let head = &certs[0];

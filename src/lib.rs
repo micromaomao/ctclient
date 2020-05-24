@@ -1,15 +1,22 @@
-//! Certificate Transparency Log client for monitoring and gossiping.
+//! Certificate Transparency Log client suitable for monitoring, quick
+//! SCT validation, gossiping, etc.
 //!
 //! The source code of this project contains some best-effort explanation
-//! comments for others trying to implement such a client to read - as of 2019,
+//! comments for others trying to implement such a client. As of 2019,
 //! the documentation that exists out there are (in my opinion) pretty lacking,
 //! and I had some bad time trying to implement this.
 //!
 //! All `pub_key` are in DER format, which is the format returned (in base64)
-//! by google's trusted log list. (No one told me this).
+//! by google's trusted log list. `signature`s are *Digitally-signed structs*, and
+//! `raw_signature`s are ASN1-encoded signatures.
 //!
-//! The source code of this project is not intended to be a beginner friendly tutorial on how a
+//! Best effort are made to catch misbehavior by CT logs or invalid certificates. It is up
+//! to the user of this library to decide what to do when logs don't behave corrctly.
+//!
+//! This project is not intended to be a beginner friendly tutorial on how a
 //! CT log works. To learn more about CT, you can read [the RFC](https://tools.ietf.org/html/rfc6962).
+//!
+//! API calls are currently all blocking. If anyone is interested in rewriting them in Futures, PR is welcome.
 
 // todo: gossiping
 
@@ -170,6 +177,9 @@ impl fmt::Display for Error {
 }
 
 /// A stateful CT monitor.
+///
+/// One instance of this struct only concerns with one particular log. To monitor multiple
+/// logs, you can create multiple such instances and run them on different threads.
 ///
 /// It remembers a last checked tree root, so that it only checks the newly added
 /// certificates. It's state can be load from / stored as a `[u8]`, which you can
