@@ -6,7 +6,7 @@
 
 Certificate Transparency Log client suitable for monitoring, quick SCT validation, gossiping, etc.
 
-(Not a full-fledged client with UI and everything - will work on that later. This is just a library to make your own clien with.)
+(Not a full-fledged client with UI and everything - will work on that later. This is just a library to make your own client with.)
 
 ## Build requirement
 
