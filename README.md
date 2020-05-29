@@ -1,10 +1,12 @@
-# &#x1F512; [Certificate Transparency](https://www.certificate-transparency.org/) Log client
+# &#x1F512; [Certificate Transparency](https://www.certificate-transparency.org/) Log client library
 
 [![live stream domain video demo](./readme_img/demo.gif)](./examples/live_stream_domains.rs)
 
 ![Crates.io](https://img.shields.io/crates/l/ctclient)&nbsp;[![Crates.io](https://img.shields.io/crates/v/ctclient)](https://crates.io/crates/ctclient)&nbsp;[![doc link](https://docs.rs/ctclient/badge.svg)](https://docs.rs/ctclient)
 
 Certificate Transparency Log client suitable for monitoring, quick SCT validation, gossiping, etc.
+
+(Not a full-fledged client with UI and everything - will work on that later. This is just a library to make your own clien with.)
 
 ## Build requirement
 
