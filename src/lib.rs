@@ -475,7 +475,7 @@ impl CTClient {
     let mut high = self.latest_size;
     let mut last_leaf: Option<(u64, Leaf)> = None;
     while low < high {
-      let mid = (low + high) / 2;
+      let mid = (low + high - 1) / 2;
       let mut entries_iter = internal::get_entries(&self.http_client, &self.base_url, mid..mid + 1);
       entries_iter.batch_size = 1;
       match entries_iter.next() {
@@ -497,7 +497,7 @@ impl CTClient {
         }
       }
     }
-    if low >= self.latest_size || last_leaf.is_none() {
+    if low > self.latest_size {
       Ok(None)
     } else {
       Ok(Some(last_leaf.unwrap()))
