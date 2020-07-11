@@ -14,13 +14,12 @@ OpenSSL >= 1.1.0
 
 ## Features
 
-* Monitor tree head update
-* Verify consistency and inclusion proof
-* Verify Signed Tree Head (STH) and Signed Certificate Timestamp (SCT)
-* Construct leaf hash from SCT and check inclusion
-* Low and high level API
-* Extract SCT from certificate
-* Lots of comment in code intended as reference for other hackers!
+* [Monitor tree head update and certificates](https://docs.rs/ctclient/0.4/ctclient/struct.CTClient.html)
+* Verify consistency and inclusion proof (automatically or via [low level API](https://docs.rs/ctclient/0.4/ctclient/internal/index.html#functions))
+* Verify Signed Tree Head (STH) and Signed Certificate Timestamp (SCT), and [fetch and verify inclusion proof to defend the SCT](https://docs.rs/ctclient/0.4/ctclient/struct.CTClient.html#method.check_inclusion_proof_for_sct).
+* More low level API to [mess with leaf data](https://docs.rs/ctclient/0.4/ctclient/internal/struct.Leaf.html#fields), [proof construction](https://docs.rs/ctclient/0.4/ctclient/internal/fn.consistency_proof_parts.html), etc.
+* [Extract SCT from certificate](https://docs.rs/ctclient/0.4/ctclient/struct.SignedCertificateTimestamp.html#method.from_cert_sct_extension)
+* Lots of comment in code intended as reference for other hackers.
 
 ## TODOs
 
