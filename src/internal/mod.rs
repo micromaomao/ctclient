@@ -9,13 +9,13 @@ use openssl::pkey::PKey;
 
 pub use consistency::*;
 pub use digitally_signed_struct::*;
-pub use get_entries::*;
+pub use getentries::*;
 pub use inclusion::*;
 pub use leaf::*;
 use crate::{Error, jsons, SignedTreeHead, utils};
 
 mod consistency;
-mod get_entries;
+mod getentries;
 mod leaf;
 mod digitally_signed_struct;
 pub mod openssl_ffi;

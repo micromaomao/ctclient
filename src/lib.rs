@@ -276,6 +276,13 @@ impl CTClient {
     &self.http_client
   }
 
+  /// Get the base_url of the log currently being monitored by this client.
+  ///
+  /// This is the url that was passed to the constructor.
+  pub fn get_base_url(&self) -> &reqwest::Url {
+    &self.base_url
+  }
+
   /// Calls `self.update()` with `None` as `cert_handler`.
   pub fn light_update(&mut self) -> SthResult {
     self.update(None::<fn(&[X509])>)
