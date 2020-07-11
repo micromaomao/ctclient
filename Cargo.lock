@@ -99,7 +99,7 @@ dependencies = [
 
 [[package]]
 name = "ctclient"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64 0.12.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "env_logger 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)",
