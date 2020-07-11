@@ -14,7 +14,8 @@
 //! to the user of this library to decide what to do when logs don't behave corrctly.
 //!
 //! This project is not intended to be a beginner friendly tutorial on how a
-//! CT log works. To learn more about CT, you can read [the RFC](https://tools.ietf.org/html/rfc6962).
+//! CT log works. To learn more about CT, you can read [my blog article](https://blog.maowtm.org/ct/en.html)
+//! or [the RFC](https://tools.ietf.org/html/rfc6962).
 //!
 //! API calls are currently all blocking. If anyone is interested in rewriting them in Futures, PR is welcome.
 
