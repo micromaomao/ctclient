@@ -182,8 +182,7 @@ impl fmt::Display for Error {
 /// logs, you can create multiple such instances and run them on different threads.
 ///
 /// It remembers a last checked tree root, so that it only checks the newly added
-/// certificates. It's state can be load from / stored as a `[u8]`, which you can
-/// then e.g. store in a file / database.
+/// certificates in the log each time you call [`update`](Self::update).
 pub struct CTClient {
   base_url: reqwest::Url,
   pub_key: PKey<openssl::pkey::Public>,
@@ -299,6 +298,8 @@ impl CTClient {
   /// To log the behavior of CT logs, store the returned tree head and signature in some kind
   /// of database (even when error). This can be used to prove a misconduct (such as a non-extending-only tree)
   /// in the future.
+  ///
+  /// Will only update the stored latest tree head if an [`Ok`](SthResult::Ok) is returned.
   pub fn update<H>(&mut self, mut cert_handler: Option<H>) -> SthResult
     where H: FnMut(&[X509])
   {

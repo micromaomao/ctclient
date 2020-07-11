@@ -39,6 +39,8 @@ impl SignedCertificateTimestamp {
   /// if the extension is there.
   ///
   /// If the certificate does not contain the extension, `Ok(vec![])` is returned.
+  ///
+  /// Will not verify the signature. Call [`self.verify`](Self::verify) with the log's public key to verify.
   pub fn from_cert_sct_extension(cert: &X509Ref, issuer: &X509Ref) -> Result<Vec<SignedCertificateTimestamp>, Error> {
     let sctlist = sct_list_from_x509(cert)?;
     if sctlist.is_none() {
