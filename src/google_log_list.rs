@@ -23,7 +23,9 @@ struct LogJson {
   key: String,
   log_id: String,
   mmd: u64,
-  url: String
+  url: String,
+  state: HashMap<String, serde_json::Value>,
+  description: String
 }
 
 /// A downloaded log list.
@@ -36,14 +38,31 @@ pub struct LogList {
 #[derive(Debug, Clone)]
 pub struct Log {
   pub pub_key: Vec<u8>,
-  pub base_url: String
+  pub base_url: String,
+  pub state: LogState,
+  pub description: String
+}
+
+#[derive(Debug, PartialEq, Eq, Copy, Clone)]
+pub enum LogState {
+  Pending,
+  Qualified,
+  Usable,
+  Readonly,
+  Retired,
+  Rejected
 }
 
 impl LogList {
-  /// Download the log list at runtime.
+  /// Download the log list at runtime from [`https://www.gstatic.com/ct/log_list/v2/log_list.json`](https://www.gstatic.com/ct/log_list/v2/log_list.json).
   pub fn get() -> Result<LogList, Error> {
+    LogList::get_with_url("https://www.gstatic.com/ct/log_list/v2/log_list.json")
+  }
+
+  /// Download the log list at runtime.
+  pub fn get_with_url(url: &str) -> Result<LogList, Error> {
     let client = new_http_client()?;
-    let json: ResponseJSON = client.get("https://www.gstatic.com/ct/log_list/v2/log_list.json").send().map_err(|e| Error::NetIO(e))?
+    let json: ResponseJSON = client.get(url).send().map_err(|e| Error::NetIO(e))?
         .json().map_err(|e| Error::MalformedResponseBody(format!("{}", e)))?;
     let mut hm: HashMap<Vec<u8>, Log> = HashMap::with_capacity(
       json.operators.iter().map(|x| x.logs.len()).sum()
@@ -59,8 +78,19 @@ impl LogList {
         if hm.contains_key(&log_id) {
           return Err(Error::MalformedResponseBody("Multiple logs returned with the same id.".to_owned()));
         }
+        let state_keys: Vec<&str> = log.state.keys().map(|x| &x[..]).collect();
+        use LogState::*;
+        let log_state = match &state_keys[..] {
+          ["pending"] => Pending,
+          ["qualified"] => Qualified,
+          ["usable"] => Usable,
+          ["readonly"] => Readonly,
+          ["retired"] => Retired,
+          ["rejected"] => Rejected,
+          _ => return Err(Error::MalformedResponseBody(format!("Invalid log state object: {:?}", &log.state)))
+        };
         hm.insert(log_id, Log {
-          pub_key, base_url
+          pub_key, base_url, state: log_state, description: log.description.clone()
         });
       }
     }
