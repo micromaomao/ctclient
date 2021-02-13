@@ -27,7 +27,7 @@ extern crate lazy_static;
 use std::{fmt, io, path};
 
 use log::{info, warn};
-use openssl::pkey::PKey;
+use openssl::pkey::{PKey, Public};
 use openssl::x509::X509;
 
 use internal::new_http_client;
@@ -92,6 +92,7 @@ pub enum Error {
 /// Either a fetched and checked [`SignedTreeHead`], or a [`SignedTreeHead`] that has a valid signature
 /// but did not pass some internal checks, or just an [`Error`].
 #[derive(Debug)]
+#[must_use]
 pub enum SthResult {
   /// Got the new tree head.
   Ok(SignedTreeHead),
@@ -177,6 +178,8 @@ impl fmt::Display for Error {
   }
 }
 
+impl std::error::Error for Error {}
+
 /// A stateful CT monitor.
 ///
 /// One instance of this struct only concerns with one particular log. To monitor multiple
@@ -184,24 +187,27 @@ impl fmt::Display for Error {
 ///
 /// It remembers a last checked tree root, so that it only checks the newly added
 /// certificates in the log each time you call [`update`](Self::update).
+#[derive(Debug)]
 pub struct CTClient {
   base_url: reqwest::Url,
   pub_key: PKey<openssl::pkey::Public>,
   http_client: reqwest::blocking::Client,
   latest_size: u64,
-  latest_tree_hash: [u8; 32]
+  latest_tree_hash: [u8; 32],
+  backward_th: Option<(u64, [u8; 32])>,
 }
 
-impl fmt::Debug for CTClient {
+impl fmt::Display for CTClient {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-    write!(f, "CT log {}: current root = {}, size = {}", self.base_url, utils::u8_to_hex(&self.latest_tree_hash[..]), self.latest_size)
+    write!(f, "CT log {}: current root = {}, size = {}",
+            self.base_url,
+            utils::u8_to_hex(&self.latest_tree_hash[..]),
+            self.latest_size)
   }
 }
 
 impl CTClient {
-  /// Construct a new `CTClient` instance, and fetch the latest tree root.
-  ///
-  /// Previous certificates in this log will not be checked.
+  /// Fetch the latest tree root, then call [`new_from_perv_tree_hash`](Self::new_from_perv_tree_hash)
   ///
   /// # Errors
   ///
@@ -216,7 +222,7 @@ impl CTClient {
   /// let public_key = decode("MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE01EAhx4o0zPQrXTcYjgCt4MVFsT0Pwjzb1RwrM0lhWDlxAYPP6/gyMCXNkOn/7KFsjL7rwk78tHMpY8rXn8AYg==").unwrap();
   /// let client = CTClient::new_from_latest_th("https://ct.cloudflare.com/logs/nimbus2020/", &public_key).unwrap();
   /// ```
-  pub fn new_from_latest_th(base_url: &str, pub_key: &[u8]) -> Result<Self, Error> {
+  pub fn new_from_latest_th(base_url: &str, pub_key: &[u8]) -> Result<(Self, SignedTreeHead), Error> {
     if !base_url.ends_with('/') {
       return Err(Error::InvalidArgument("baseUrl must end with /".to_owned()));
     }
@@ -224,19 +230,19 @@ impl CTClient {
     let http_client = new_http_client()?;
     let evp_pkey = PKey::public_key_from_der(pub_key).map_err(|e| Error::InvalidArgument(format!("Error parsing public key: {}", &e)))?;
     let sth = internal::check_tree_head(&http_client, &base_url, &evp_pkey)?;
-    Ok(CTClient{
+    Ok((CTClient{
       base_url,
       pub_key: evp_pkey,
       http_client,
       latest_size: sth.tree_size,
-      latest_tree_hash: sth.root_hash
-    })
+      latest_tree_hash: sth.root_hash,
+      backward_th: Some((sth.tree_size, sth.root_hash))
+    }, sth))
   }
 
   /// Construct a new `CTClient` that will check all certificates included after
-  /// the given tree state.
-  ///
-  /// Previous certificates in this log before the provided tree hash will not be checked.
+  /// the given tree head in each [`update`](Self::update) call, and all certificates
+  /// included before the given tree head in each [`backward_update`](Self::backward_update) call.
   ///
   /// # Example
   ///
@@ -262,13 +268,36 @@ impl CTClient {
       pub_key: evp_pkey,
       http_client,
       latest_size: tree_size,
-      latest_tree_hash: tree_hash
+      latest_tree_hash: tree_hash,
+      backward_th: Some((tree_size, tree_hash))
     })
   }
 
-  /// Get the last checked tree head. Returns `(tree_size, root_hash)`.
+  /// Get the last checked (forward) tree head. Returns `(tree_size, root_hash)`.
   pub fn get_checked_tree_head(&self) -> (u64, [u8; 32]) {
     (self.latest_size, self.latest_tree_hash)
+  }
+
+  pub fn get_backward_tree_head(&self) -> Option<&(u64, [u8; 32])> {
+    self.backward_th.as_ref()
+  }
+
+  /// Set the forward tree head without actually doing any consistency checks.
+  pub fn unchecked_set_tree_head(&mut self, tree_size: u64, tree_hash: [u8; 32]) {
+    self.latest_size = tree_size;
+    self.latest_tree_hash = tree_hash;
+    if let Some((backward_tsize, _)) = self.backward_th {
+      if backward_tsize > tree_size {
+        self.backward_th = Some((tree_size, tree_hash));
+      }
+    }
+  }
+
+  pub fn unchecked_set_backward_tree_head(&mut self, tree_size: u64, tree_hash: [u8; 32]) {
+    if tree_size > self.latest_size {
+      panic!("Backward tree size must not be greater than forward tree size.");
+    }
+    self.backward_th = Some((tree_size, tree_hash))
   }
 
   /// Get the underlying http client used to call CT APIs.
@@ -281,6 +310,10 @@ impl CTClient {
   /// This is the url that was passed to the constructor.
   pub fn get_base_url(&self) -> &reqwest::Url {
     &self.base_url
+  }
+
+  pub fn get_pub_key(&self) -> &PKey<Public> {
+    &self.pub_key
   }
 
   /// Calls `self.update()` with `None` as `cert_handler`.
@@ -360,7 +393,7 @@ impl CTClient {
           Err(e) => return SthResult::ErrWithSth(e, sth)
         };
 
-        if cert_handler.is_some() {
+        if let Some(ref mut handler) = cert_handler {
           let i_start = self.latest_size;
           let mut leafs = internal::get_entries(&self.http_client, &self.base_url, i_start..new_tree_size);
           let mut leaf_hashes: Vec<[u8; 32]> = Vec::new();
@@ -369,9 +402,11 @@ impl CTClient {
             match leafs.next() {
               Some(Ok(leaf)) => {
                 leaf_hashes.push(leaf.hash);
-                if let Err(e) = self.check_leaf(&leaf, &mut cert_handler) {
-                  return SthResult::ErrWithSth(e, sth);
-                }
+                let chain = match leaf.verify_and_get_x509_chain() {
+                  Ok(c) => c,
+                  Err(e) => return SthResult::ErrWithSth(e, sth)
+                };
+                handler(&chain[..]);
               },
               Some(Err(e)) => {
                 return SthResult::ErrWithSth(
@@ -409,65 +444,6 @@ impl CTClient {
         SthResult::Ok(sth)
       }
     }
-  }
-
-  /// Called by [`Self::update`](crate::CTClient::update) for each leaf received
-  /// to check the certificates. Usually no need to call yourself.
-  pub fn check_leaf<H>(&self, leaf: &internal::Leaf, cert_handler: &mut Option<H>) -> Result<(), Error>
-    where H: FnMut(&[X509])
-  {
-    let chain: Vec<_> = leaf.x509_chain.iter().map(|der| {
-      openssl::x509::X509::from_der(&der[..])
-    }).collect();
-    for rs in chain.iter() {
-      if let Err(e) = rs {
-        return Err(Error::BadCertificate(format!("While decoding certificate: {}", e)));
-      }
-    }
-    let chain: Vec<X509> = chain.into_iter().map(|x| x.unwrap()).collect();
-    if chain.len() <= 1 {
-      return Err(Error::BadCertificate("Empty certificate chain?".to_owned()));
-    }
-    for part in chain.windows(2) {
-      let ca = &part[1];
-      let target = &part[0];
-      let ca_pkey = ca.public_key().map_err(|e| Error::BadCertificate(format!("Can't get public key from ca: {}", e)))?;
-      let verify_success = target.verify(&ca_pkey).map_err(|e| Error::Unknown(format!("{}", e)))?;
-      if !verify_success {
-        return Err(Error::BadCertificate("Invalid certificate chain.".to_owned()));
-      }
-    }
-    if let Some(tbs) = &leaf.tbs_cert {
-      use internal::openssl_ffi::{x509_to_tbs, x509_remove_poison};
-      let cert = chain[0].as_ref();
-      let mut cert_clone = x509_clone(&cert).map_err(|e| Error::Unknown(format!("Duplicating certificate: {}", e)))?;
-      x509_remove_poison(&mut cert_clone).map_err(|e| Error::Unknown(format!("While removing poison: {}", e)))?;
-      let expected_tbs = x509_to_tbs(&cert_clone)
-          .map_err(|e| Error::Unknown(format!("x509_to_tbs errored: {}", e)))?;
-      if tbs != &expected_tbs {
-        // Maybe the precert is signed with an intermediate precert signing CA. The TBS will nevertheless contain the
-        // "true" CA as the issuer name.
-        // In that case, chain[1] is the precert signing CA, and chain[2] is the "true" signing CA.
-        let mut tbs_correct = false;
-        if chain.len() > 2 {
-          x509_make_a_looks_like_issued_by_b(&mut cert_clone, &chain[2]).map_err(|e|
-                Error::Unknown(format!("x509_make_a_looks_like_issued_by_b failed: {}", e)))?;
-          let new_expected_tbs = x509_to_tbs(&cert_clone)
-              .map_err(|e| Error::Unknown(format!("x509_to_tbs errored: {}", e)))?;
-          if tbs == &new_expected_tbs {
-            tbs_correct = true;
-          }
-        }
-        if !tbs_correct {
-          return Err(Error::BadCertificate("TBS does not match pre-cert.".to_owned()));
-        }
-      }
-    }
-
-    if let Some(handler) = cert_handler {
-      handler(&chain);
-    }
-    Ok(())
   }
 
   /// Given a [`SignedCertificateTimestamp`], check that the CT log monitored by this client can provide
@@ -513,6 +489,15 @@ impl CTClient {
     }
   }
 
+  pub fn unchecked_get_tree_hash_by_last_leaf(&self, tree_size: u64, leaf: &Leaf) -> Result<[u8; 32], Error> {
+    let inclusion_res = fetch_inclusion_proof(&self.http_client, &self.base_url, tree_size, &leaf.hash)?;
+    if inclusion_res.leaf_index != tree_size {
+      Err(Error::Unknown("inclusion result.leaf_index != expected".to_owned()))
+    } else {
+      Ok(inclusion_res.calculated_tree_hash)
+    }
+  }
+
   pub fn first_tree_head_after(&self, timestamp: u64) -> Result<Option<(u64, [u8; 32])>, Error> {
     let fla = self.first_leaf_after(timestamp)?;
     if fla.is_none() {
@@ -520,34 +505,66 @@ impl CTClient {
     }
     let fla = fla.unwrap();
     let tsize = fla.0 + 1;
-    let inclusion_res = fetch_inclusion_proof(&self.http_client, &self.base_url, tsize, &fla.1.hash)?;
-    if inclusion_res.leaf_index != fla.0 {
-      return Err(Error::Unknown("inclusion result.leaf_index != expected".to_owned()));
-    }
-    Ok(Some((tsize, inclusion_res.calculated_tree_hash)))
+    let thash = self.unchecked_get_tree_hash_by_last_leaf(tsize, &fla.1)?;
+    Ok(Some((tsize, thash)))
   }
 
-  pub fn rollback_to_timestamp(&mut self, timestamp: u64) -> Result<(), Error> {
+  pub fn checked_rollback_to_tree_head(&mut self, tree_size: u64, tree_hash: [u8; 32]) -> Result<(), Error> {
+    use std::cmp::Ordering::*;
+    match tree_size.cmp(&self.latest_size) {
+      Less => {
+        check_consistency_proof(&self.http_client, &self.base_url, tree_size, self.latest_size, &tree_hash, &self.latest_tree_hash)?;
+        self.unchecked_set_tree_head(tree_size, tree_hash);
+        info!("{}: Rolled back to {} {}", self.base_url.as_str(), tree_size, utils::u8_to_hex(&tree_hash));
+        Ok(())
+      },
+      Equal => Ok(()),
+      Greater => panic!("Attempting to roll back to {}, which is greater than current tree size of {}.", tree_size, self.latest_size)
+    }
+  }
+
+  pub fn checked_rollback_to_timestamp(&mut self, timestamp: u64) -> Result<(), Error> {
     let res = self.first_tree_head_after(timestamp)?;
     if res.is_none() {
       return Ok(());
     }
     let (tsize, thash) = res.unwrap();
     if tsize < self.latest_size {
-      check_consistency_proof(&self.http_client, &self.base_url, tsize, self.latest_size, &thash, &self.latest_tree_hash)?;
-      self.latest_size = tsize;
-      self.latest_tree_hash = thash;
-      info!("{}: Rolled back to {} {}", self.base_url.as_str(), tsize, utils::u8_to_hex(&thash));
+      self.checked_rollback_to_tree_head(tsize, thash)
+    } else {
+      Ok(())
     }
-    Ok(())
+  }
+
+  pub fn backward_update<H>(&mut self, limit: u64, cert_handler: H) -> Result<(), Error>
+    where H: FnMut(&[X509]) {
+    if limit == 0 {
+      panic!("Limit must be positive.");
+    }
+    if self.backward_th.is_none() {
+      info!("{} backward_update skipped.", self.base_url.as_str());
+      return Ok(());
+    }
+    unimplemented!()
   }
 
   /// Serialize the state of this client into bytes
   pub fn as_bytes(&self) -> Result<Vec<u8>, Error> {
     // Scheme: (All integers are in big-endian, fixed array don't specify length)
-    // [Version: u8] [base_url in UTF-8] 0x00 [tree_size: u64] [tree_hash: [u8; 32]] [len of pub_key: u32] [pub_key: [u8]: DER public key for this log] [sha256 of everything seen before: [u8; 32]]
+    // [Version: u8]
+    // [base_url in UTF-8] 0x00
+    // [tree_size: u64]
+    // [tree_hash: [u8; 32]]
+    // [has_backward_tree: u8]
+    // (
+    //   [backward_tree_size: u64]
+    //   [backward_tree_hash: [u8; 32]]
+    // )? // only present if has_backward_tree is true
+    // [len of pub_key: u32]
+    // [pub_key: [u8]: DER public key for this log]
+    // [sha256 of everything seen before: [u8; 32]]
     let mut v = Vec::new();
-    v.push(0u8); // Version = development
+    v.push(1u8);
     let url_bytes = self.base_url.as_str().as_bytes();
     assert!(!url_bytes.contains(&0u8));
     v.extend_from_slice(url_bytes);
@@ -555,6 +572,14 @@ impl CTClient {
     v.extend_from_slice(&u64::to_be_bytes(self.latest_size));
     assert_eq!(self.latest_tree_hash.len(), 32);
     v.extend_from_slice(&self.latest_tree_hash);
+    if let Some((b_tsize, b_thash)) = self.backward_th {
+      v.push(1u8);
+      v.extend_from_slice(&u64::to_be_bytes(b_tsize));
+      assert_eq!(b_thash.len(), 32);
+      v.extend_from_slice(&b_thash);
+    } else {
+      v.push(0u8);
+    }
     let pub_key = self.pub_key.public_key_to_der().map_err(|e| Error::Unknown(format!("While encoding public key: {}", &e)))?;
     assert!(pub_key.len() < std::u32::MAX as usize);
     v.extend_from_slice(&u32::to_be_bytes(pub_key.len() as u32));
@@ -563,7 +588,7 @@ impl CTClient {
     Ok(v)
   }
 
-  /// Parse a byte string returned by [`Self::as_bytes`](CTClient::as_bytes).
+  /// Parse a byte string returned by [`Self::as_bytes`](CTClient::as_bytes). This is backward compatible.
   pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
     use std::convert::TryInto;
     fn e_inval() -> Result<CTClient, Error> {
@@ -575,7 +600,7 @@ impl CTClient {
     }
     let version = input[0];
     input = &input[1..];
-    if version != 0 {
+    if version != 0 && version != 1 {
       return Err(Error::InvalidArgument("The bytes are encoded by a ctclient of higher version.".to_owned()));
     }
     let base_url_len = match input.iter().position(|x| *x == 0) {
@@ -594,6 +619,38 @@ impl CTClient {
     }
     let tree_hash: [u8; 32] = input[..32].try_into().unwrap();
     input = &input[32..];
+    let backward_tree = if version == 1 {
+      if input.len() < 1 {
+        return e_inval();
+      }
+      let has_backward_tree: u8 = input[0];
+      let has_backward_tree = match has_backward_tree {
+        0 => false,
+        1 => true,
+        _ => return e_inval()
+      };
+      let mut backward_tree: Option<(u64, [u8; 32])> = None;
+      input = &input[1..];
+      if has_backward_tree {
+        if input.len() < 8 {
+          return e_inval();
+        }
+        let tsize = u64::from_be_bytes(input[..8].try_into().unwrap());
+        input = &input[8..];
+
+        if input.len() < 32 {
+          return e_inval();
+        }
+        let thash: [u8; 32] = input[..32].try_into().unwrap();
+        input = &input[32..];
+        backward_tree = Some((tsize, thash));
+      }
+      backward_tree
+    } else if version == 0 {
+      Some((tree_size, tree_hash))
+    } else {
+      unreachable!()
+    };
     if input.len() < 4 {
       return e_inval();
     }
@@ -624,7 +681,8 @@ impl CTClient {
       pub_key,
       http_client: new_http_client()?,
       latest_size: tree_size,
-      latest_tree_hash: tree_hash
+      latest_tree_hash: tree_hash,
+      backward_th: backward_tree
     })
   }
 }

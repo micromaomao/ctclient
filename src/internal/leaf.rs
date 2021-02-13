@@ -1,6 +1,10 @@
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
 
+use openssl::x509::X509;
+
+use crate::internal::openssl_ffi::*;
+
 use crate::Error;
 use crate::jsons;
 use crate::utils;
@@ -202,6 +206,56 @@ impl Leaf {
       return err_invalid();
     }
     Ok(Leaf{hash, is_pre_cert, x509_chain, tbs_cert: tbs, timestamp, extensions: leaf_slice.to_owned(), issuer_key_hash})
+  }
+
+  pub fn verify_and_get_x509_chain(&self) -> Result<Vec<X509>, Error> {
+    let chain: Vec<_> = self.x509_chain.iter().map(|der| {
+      openssl::x509::X509::from_der(&der[..])
+    }).collect();
+    for rs in chain.iter() {
+      if let Err(e) = rs {
+        return Err(Error::BadCertificate(format!("While decoding certificate: {}", e)));
+      }
+    }
+    let chain: Vec<X509> = chain.into_iter().map(|x| x.unwrap()).collect();
+    if chain.len() <= 1 {
+      return Err(Error::BadCertificate("Empty certificate chain?".to_owned()));
+    }
+    for part in chain.windows(2) {
+      let ca = &part[1];
+      let target = &part[0];
+      let ca_pkey = ca.public_key().map_err(|e| Error::BadCertificate(format!("Can't get public key from CA: {}", e)))?;
+      let verify_success = target.verify(&ca_pkey).map_err(|e| Error::Unknown(format!("{}", e)))?;
+      if !verify_success {
+        return Err(Error::BadCertificate("Invalid certificate chain.".to_owned()));
+      }
+    }
+    if let Some(tbs) = &self.tbs_cert {
+      let cert = chain[0].as_ref();
+      let mut cert_clone = x509_clone(&cert).map_err(|e| Error::Unknown(format!("Duplicating certificate: {}", e)))?;
+      x509_remove_poison(&mut cert_clone).map_err(|e| Error::Unknown(format!("While removing poison: {}", e)))?;
+      let expected_tbs = x509_to_tbs(&cert_clone)
+          .map_err(|e| Error::Unknown(format!("x509_to_tbs errored: {}", e)))?;
+      if tbs != &expected_tbs {
+        // Maybe the precert is signed with an intermediate precert signing CA. The TBS will nevertheless contain the
+        // "true" CA as the issuer name.
+        // In that case, chain[1] is the precert signing CA, and chain[2] is the "true" signing CA.
+        let mut tbs_correct = false;
+        if chain.len() > 2 {
+          x509_make_a_looks_like_issued_by_b(&mut cert_clone, &chain[2]).map_err(|e|
+              Error::Unknown(format!("x509_make_a_looks_like_issued_by_b failed: {}", e)))?;
+          let new_expected_tbs = x509_to_tbs(&cert_clone)
+              .map_err(|e| Error::Unknown(format!("x509_to_tbs errored: {}", e)))?;
+          if tbs == &new_expected_tbs {
+            tbs_correct = true;
+          }
+        }
+        if !tbs_correct {
+          return Err(Error::BadCertificate("TBS does not match pre-cert.".to_owned()));
+        }
+      }
+    }
+    Ok(chain)
   }
 }
 

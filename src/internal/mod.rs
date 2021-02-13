@@ -21,6 +21,11 @@ mod digitally_signed_struct;
 pub mod openssl_ffi;
 mod inclusion;
 
+pub mod re_exports {
+  pub use reqwest;
+  pub use openssl;
+}
+
 /// Construct a new [`reqwest::Client`] to be used with the
 /// functions in this module. You don't necessary need to use this.
 ///

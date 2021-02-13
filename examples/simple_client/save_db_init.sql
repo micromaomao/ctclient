@@ -18,8 +18,8 @@ CREATE INDEX sth_tree_size_idx ON "received_signed_tree_heads" ("log_id", "tree_
 
 INSERT INTO "ctlogs" (id, url, pub_key, checked_tree_size, checked_tree_head) VALUES (
     0,
-    'https://ct.googleapis.com/logs/argon2020/',
-    x'3059301306072a8648ce3d020106082a8648ce3d03010703420004e93c76a75c8a638d35e4dc8862f76b937e9eb34b80735cc0e0f43e4c6458fb766351321863d5b2bbedeaff5e3b246e2f35528bb4359aad9c15a86920ea5018cc',
+    'https://ct.googleapis.com/logs/xenon2020/',
+    x'3059301306072a8648ce3d020106082a8648ce3d03010703420004654ef956a8f2cd24e01592809d683541e61f14521165330aeeade459666c98785076b0589c7459dce038914794c7424dfb15fe75282dd6bbaa521865ee33af9b',
     0,
     x'0000000000000000000000000000000000000000000000000000000000000000'
 );

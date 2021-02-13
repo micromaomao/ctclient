@@ -5,6 +5,7 @@ use crate::internal::new_http_client;
 
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::convert::TryInto;
 
 #[derive(Debug, Deserialize, Clone)]
 struct ResponseJSON {
@@ -31,7 +32,7 @@ struct LogJson {
 /// A downloaded log list.
 #[derive(Debug, Clone)]
 pub struct LogList {
-  pub map_id_to_log: HashMap<Vec<u8>, Log>
+  pub map_id_to_log: HashMap<[u8; 32], Log>
 }
 
 /// A log in [`LogList`].
@@ -64,7 +65,7 @@ impl LogList {
     let client = new_http_client()?;
     let json: ResponseJSON = client.get(url).send().map_err(|e| Error::NetIO(e))?
         .json().map_err(|e| Error::MalformedResponseBody(format!("{}", e)))?;
-    let mut hm: HashMap<Vec<u8>, Log> = HashMap::with_capacity(
+    let mut hm: HashMap<[u8; 32], Log> = HashMap::with_capacity(
       json.operators.iter().map(|x| x.logs.len()).sum()
     );
     fn b64_dec_err(e: base64::DecodeError) -> Error {
@@ -73,6 +74,10 @@ impl LogList {
     for op in json.operators.iter() {
       for log in op.logs.iter() {
         let log_id = base64::decode(&log.log_id).map_err(b64_dec_err)?;
+        if log_id.len() != 32 {
+          return Err(Error::MalformedResponseBody(format!("Invalid log_id length: {}", log_id.len())));
+        }
+        let log_id: [u8; 32] = log_id[..].try_into().unwrap();
         let pub_key = base64::decode(&log.key).map_err(b64_dec_err)?;
         let base_url = log.url.to_owned();
         if hm.contains_key(&log_id) {
@@ -101,7 +106,7 @@ impl LogList {
   }
 
   /// Lookup a [`Log`] by its 32-byte `log_id`.
-  pub fn find_by_id<'a, 'b>(&'a self, id: &'b [u8]) -> Option<&'a Log> {
+  pub fn find_by_id<'a, 'b>(&'a self, id: &'b [u8; 32]) -> Option<&'a Log> {
     self.map_id_to_log.get(id)
   }
 }

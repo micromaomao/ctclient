@@ -6,6 +6,7 @@ use openssl::x509::X509;
 use ctclient::CTClient;
 use ctclient::google_log_list::LogList;
 use ctclient::utils::u8_to_hex;
+use ctclient::internal::get_entries;
 
 fn main() {
   env_logger::init();
@@ -51,6 +52,18 @@ fn main() {
       match lc.check_inclusion_proof_for_sct(&sct) {
         Ok(index) => {
           println!("    inclusion proof checked, leaf index is {}", index);
+          for ent in get_entries(lc.get_reqwest_client(), lc.get_base_url(), index..(index+1)) {
+            match ent {
+              Err(e) => {
+                println!("    unable to get entry: {}", e);
+              },
+              Ok(ent) => {
+                if let Some(prec) = ent.x509_chain.first() {
+                  println!("    precert: {}", base64::encode(prec));
+                }
+              }
+            }
+          }
         }
         Err(e) => {
           println!("    inclusion proof errored: {}", e);

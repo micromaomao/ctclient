@@ -18,7 +18,8 @@ pub fn get_common_names<R: AsRef<X509Ref>>(cert: &R) -> Result<Vec<String>, Erro
   Ok(common_names)
 }
 
-/// Return the DNS names in the subjectAlternativeNames of the certificate as well as its common name.
+/// Return the DNS names in the subjectAlternativeNames of the certificate as well as its common name,
+/// ignoring anything else.
 ///
 /// Result may contain duplicate items.
 pub fn get_dns_names<R: AsRef<X509Ref>>(cert: &R) -> Result<Vec<String>, Error> {
@@ -30,9 +31,11 @@ pub fn get_dns_names<R: AsRef<X509Ref>>(cert: &R) -> Result<Vec<String>, Error> 
       if let Some(name) = name.dnsname() {
         names.push(String::from(name));
       } else if let Some(uri) = name.uri() {
-        let url_parsed = reqwest::Url::parse(uri).map_err(|_| Error::BadCertificate("This certificate has a URI SNI, but the URI is not parsable.".to_owned()))?;
-        if let Some(host) = url_parsed.domain() {
-          names.push(String::from(host));
+        let url_parsed = reqwest::Url::parse(uri);
+        if let Ok(url_parsed) = url_parsed {
+          if let Some(host) = url_parsed.domain() {
+            names.push(String::from(host));
+          }
         }
       }
     }
